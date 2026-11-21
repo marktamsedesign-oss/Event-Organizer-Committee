@@ -53,3 +53,47 @@ button:focus-visible{outline:3px solid #8fb4ff;outline-offset:2px}
 .menu-item{display:flex;align-items:center;gap:9px}
 .menu-item .ui-icon{width:16px;height:16px}
 @media(max-width:700px){.topbar{gap:6px}.top-actions{gap:5px}.icon-btn{width:36px;height:36px;min-width:36px;min-height:36px}.save-state{max-width:81px;font-size:9px}.profile-chip .profile-chevron{display:none}.add-menu{right:-42px}.actions-danger{margin-left:auto}.manager-member-row{align-items:flex-start}}
+
+
+/* v2.4 — left sharing menu, unified sync/refresh, stable current view */
+.top-left-actions{display:flex;align-items:center;gap:10px;min-width:0}
+.main-menu-wrap{position:relative;flex:none}
+.main-menu{position:absolute;left:0;right:auto;top:48px;min-width:260px;max-width:min(340px,calc(100vw - 30px));width:max-content;z-index:35}
+.main-menu .menu-item{white-space:normal}
+.share-preview{display:block;width:100%;height:min(55vh,500px);margin-top:9px;resize:vertical;line-height:1.6;font-size:12px;white-space:pre-wrap;tab-size:2}
+.share-status{line-height:1.6;margin-bottom:10px}
+.share-copy-btn{gap:8px!important;min-width:110px!important;padding:9px 14px!important}
+.top-left-actions .brand{min-width:0}
+.top-left-actions .brand strong,.top-left-actions .brand small{white-space:nowrap}
+/* Prevent double-tap zoom without disabling the page's ordinary scrolling. */
+html,body{touch-action:pan-x pan-y}
+@media(max-width:700px){
+  .top-left-actions{gap:5px}
+  .top-left-actions .brand-mark{width:30px;height:30px;font-size:17px;border-radius:9px}
+  .top-left-actions .brand{gap:6px}
+  .top-left-actions .brand strong{font-size:11px}
+  .top-left-actions .brand small{font-size:7px;letter-spacing:.65px}
+  .top-actions{gap:4px}
+  .main-menu{top:44px}
+  .share-preview{height:50vh}
+}
+@media(max-width:380px){
+  .top-left-actions .brand small{display:none}
+  .top-left-actions .brand strong{font-size:10px}
+  .save-state{display:none}
+}
+
+
+/* v2.4 task completion: binary state, no progress slider or percent on tasks */
+.task-completion{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:12px;padding:10px 12px;border:1px solid #cbe9d6;background:#f2faf5;color:#1b6d45;border-radius:10px;font-size:12px;line-height:1.55}
+.task-completion .complete-label{font-weight:700}
+.task-completion strong{font-weight:700}
+.task-completion time{font-weight:600}
+.task-completion small{font-weight:500}
+.task-completion-history{border-top:1px solid var(--border,#e5e7eb);margin-top:11px;padding-top:7px}
+.task-completion-history summary{cursor:pointer;color:var(--muted,#52627a);font-size:12px;font-weight:650;padding:4px 0}
+.task-completion-history ol{margin:7px 0 1px;padding-left:23px;font-size:12px}
+.task-completion-history li{margin:0 0 5px;line-height:1.65}
+.task-completion-history li span{margin-left:9px;color:var(--muted,#52627a)}
+.committee-actions .go-to-tasks{background:#eaf2ff;color:#1b4f9a;border-color:#c5d9fb}
+.committee-actions .go-to-tasks:hover{background:#dbeafe}

@@ -44,7 +44,7 @@ const Api = (() => {
         return receipt.result || {ok:true};
       }
     }
-    throw new Error("Confirmation timed out. Use the Sync button to retry the SAME request safely, or Refresh to discard pending edits.");
+    throw new Error("Confirmation timed out. Use Sync & Refresh to retry the SAME request safely; do not reload until the change is confirmed.");
   }
   return {request};
 })();

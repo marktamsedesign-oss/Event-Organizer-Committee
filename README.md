@@ -1,55 +1,34 @@
-# Pasko ng Angkan 2026 — v2.2
+# Pasko ng Angkan 2026 — v2.4
 
-Mobile-friendly event committee and task management for **December 13, 2026**, backed by Google Sheets and Google Apps Script, with a static frontend for GitHub Pages.
+Mobile-friendly GitHub Pages frontend plus Google Apps Script/Google Sheets backend for managing Christmas event committees, people, tasks, receivables, expenses, and food supplies.
 
-## What changed in v2.2
+**Start with [RELEASE-v2.4.md](RELEASE-v2.4.md)** for the feature list, safe upgrade sequence, and acceptance checks. Historical releases [v2.3](RELEASE-v2.3.md) and [v2.2](RELEASE-v2.2.md) remain for reference only.
 
-1. **Shared group password:** replaces per-user PINs. Name selector previews the user's committee membership and support roles before sign-in. A welcome message shows the committee count. Set the password in Apps Script **Project Settings → Script properties → `GROUP_PASSWORD`**. The code defaults to `LAMI` only if no property is set; change it before sharing your event website.
-2. **Manage committee membership:** Director / Assistant Director can add and edit committees; assign, change and remove multiple committee Heads and Support members. Heads can add/edit/remove Support assignments for their committee but cannot change Heads.
-3. **Committee-head task permissions:** Heads can create and edit tasks within their committee. Only Directors can move tasks between committees. Members can update status/progress for their committees. Task assignees are now tap-to-toggle chips; the task form defaults to also enrolling newly assigned people as Support members.
-4. **Finance and Food:** Finance includes Cash on Hand, Income and Expense and a calculated available balance. Food includes Food, Drink and Other, quantity, remarks, assignee, Todo/Done and inline toggles. Only relevant committee Heads and Directors may edit those modules. Finance deletion is limited to the original recorder or a Director.
-5. **UI improvement:** role-specific actions, responsive layout, member and login preview, safer confirm dialog, and explicit error when the frontend is connected to an old backend deployment.
+## Features
 
-## New in v2.2
+- Login using a shared group password (set `GROUP_PASSWORD` in Apps Script project Script properties; do not commit your real password to GitHub).
+- Directors can add users, edit committees, assign/replace committee Heads and Support members, and archive/restore committees without deleting the underlying records.
+- Committee Heads can edit their committee's tasks and Support roles. Committee members can mark their committee tasks **Complete**, with completion name and date visible in task details.
+- Each committee card has a **Go to tasks** icon that filters the To-do list to just that committee.
+- Committee progress is **completed task count / total task count**, not a separately editable per-task percentage.
+- Finance tracker separates Cash on Hand, Receivables, and Expenses. Historical Income records are preserved. Food tracker includes assigned supplies and Todo/Done status.
+- Upper-left menu creates a copyable plain-text report of all committees, Heads, Support/sub-team responsibilities, and tasks for group chats.
+- Upper-right **Sync & Refresh** combines background write retry and new-data reads, with a numbered badge for unsynced edits.
+- Last-confirmed in-tab state stays visible while a page load or refresh requests the latest Google Sheets data.
+- Icon-only controls have descriptive hover text and accessibility labels. Common accidental zoom gestures are blocked where browsers allow.
 
-- **Delete/archive committee (Directors):** each active committee card has a confirmed **Delete committee** action. This *soft-deletes* the committee so it no longer appears in the active directory, task list, or progress reports. Its membership, tasks, and history remain in the spreadsheet. Use **top-right profile menu → Archived committees / Restore** to recover it.
-- **Add new user (Directors):** the top-right profile menu contains **Add new user**. This creates an active **Committee Member** profile without granting Director privileges. A duplicate active name is rejected. The new member becomes available in selectors after the background save confirms.
-- **Fast background Google Sheets sync:** edits update the page immediately, then save in a sequential queue. The top bar shows **Saving N changes…**, **All changes saved**, or a failure indicator. The page prevents sign-out/refresh while saves are pending and warns before closing. It refreshes from Google Sheets after each batch and periodically when visible. Edits still require internet connectivity; timed-out saves aren't blindly retried because a write could already have succeeded.
-- **Automatic committee progress:** **number of Completed tasks ÷ total tasks × 100**, rounded to the nearest integer; 0 tasks means 0%. This percentage is shown on each committee card and in Reports, updated immediately on task edits, and recalculated after server sync. An individual task's own percentage is separate from this count-based metric.
-- **Fix member replacement:** editing a committee assignment and selecting a different user updates the **original assignment ID and row**, instead of adding an extra member. If the new person is already in that committee, the save is rejected with an explicit duplicate warning. Only Directors can replace or alter committee Head assignments.
+## Repository layout
 
-## Setup
-
-**Read `UPGRADE-GUIDE.md` before replacing files.** It covers the one-time database migration, Google Apps Script deployment and GitHub Pages publication. The frontend and backend must be updated **together**.
-
-Key files:
-
-- `index.html` — main UI, including Finance and Food tabs
+- `index.html` — single-page interface
+- `assets/js/app.js` — interactive UI and save/sync behavior
+- `assets/js/api.js` — Google Apps Script endpoint (`API_URL` must match your live `/exec` URL)
 - `assets/css/style.css` — responsive styling
-- `assets/js/api.js` — API bridge; verify `API_URL` is the correct Apps Script `/exec` URL
-- `assets/js/app.js` — interactive frontend
-- `apps-script/Code.gs` — v2.2 backend; paste into your **spreadsheet-bound** Apps Script project
-- `apps-script/README-SETUP.md` — backend setup notes
-- `.github/workflows/pages.yml` — deployment via GitHub Actions from `main`
+- `apps-script/Code.gs` — server, permissions, data operations and audit records
+- `apps-script/README-SETUP.md` — backend checklist
+- `.github/workflows/pages.yml` — GitHub Pages deployment
 
-## Permissions
+## Deployment
 
-| Role | Manage committee details | Assign Heads | Assign Support | Create/edit committee tasks | Update task progress | Finance | Food |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Director / Assistant Director | Any | Any | Any | Any | Any | Edit | Edit |
-| Committee Head | — | — | Own committee | Own committee | Own committee | Edit if COM-FIN Head | Edit if COM-FOOD Head |
-| Committee Support member | — | — | — | — | Own committee | View | View |
+Back up your spreadsheet and repository. Paste the package's `apps-script/Code.gs` into the *spreadsheet-bound* Apps Script editor, deploy a **New version**, and publish the frontend to GitHub Pages. Match the `/exec` URL in `assets/js/api.js`. Previous installations already on v2.3 need **no schema change** for the new task completion history; old `pinHash` migrations remain available if required. See [RELEASE-v2.4.md](RELEASE-v2.4.md) for full instructions.
 
-All signed-in users can see task summaries, Finance and Food data. The shared password is convenience-level protection, **not strong individual authentication**. Do not store sensitive personal or banking data in this app.
-
-## Notes
-
-- Finance calculation: **balance = sum(Cash on Hand) + sum(Income) − sum(Expense)**. Cash on Hand entries are additive; avoid re-entering the same cash balance.
-- App passwords are not stored in `localStorage`; session tokens are stored locally until sign-out or expiration. Sessions expire after ~6 hours.
-- Updating GitHub files does **not** automatically update the Apps Script deployment. Both deployment steps are required.
-- Existing data sheets are never silently cleared to resolve a header mismatch. Back up your Google Spreadsheet first, then migrate your old `Users.pinHash` column using the function provided.
-
-
-## v2.3 enhancements
-
-See **RELEASE-v2.3.md** for Receivables, icon-only controls, safe standalone Delete actions, the top-right Add menu, the Refresh/Sync badge and backend write deduplication.
+**Data and security:** The shared group password is a convenience mechanism, not strong user authentication. Do not store sensitive personal or account data. Keep the live Google Sheet private; do not upload backups or exported records to the public GitHub repository.
