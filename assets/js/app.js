@@ -1,176 +1,427 @@
-const state={bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],activity:[],activeTab:"committees"};
+/* Pasko ng Angkan 2026 — v2.1 browser UI. No frontend password/PIN storage. */
+"use strict";
+const state = {
+  bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
+  activity:[],finance:[],foodItems:[],activeTab:"committees",managingCommitteeId:null
+};
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const initials=n=>(n||"?").split(/\s+/).slice(0,2).map(x=>x[0]).join("").toUpperCase();
-function toast(msg){const el=$("#toast");el.textContent=msg;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),3200)}
-function statusClass(s){return s==="Completed"?"green":s==="Blocked"?"red":s==="In Progress"?"amber":"badge"}
-function badge(s){return `<span class="badge ${statusClass(s)}">${esc(s||"Pending")}</span>`}
-function userHeaders(){return {token:state.token,userId:state.user?.id}}
+const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const initials=name=>(name||"?").trim().split(/\s+/).slice(0,2).map(x=>x[0]||"").join("").toUpperCase();
+const money=amount=>new Intl.NumberFormat("en-PH",{style:"currency",currency:"PHP"}).format(Number(amount)||0);
+const TODAY=()=>new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Manila"});
+// Keep the UI functional when browser privacy settings block localStorage.
+function sessionGet(){try{return localStorage.getItem("pna_session")}catch{return null}}
+function sessionSet(data){try{localStorage.setItem("pna_session",JSON.stringify(data))}catch{/* session lasts until tab closes */}}
+function sessionClear(){try{localStorage.removeItem("pna_session")}catch{/* already unavailable */}}
+
+let toastTimer=null;
+function toast(message){const el=$("#toast");el.textContent=message;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),3500)}
+function setConnection(message,ok=false){const el=$("#connectionState");el.textContent=message;el.style.color=ok?"#16834b":""}
 function isManager(){return ["Director","Assistant Director"].includes(state.user?.accessRole)}
-function canManageCommittee(c){return isManager()||state.members.some(m=>m.committeeId===c.id&&m.userId===state.user?.id&&m.role==="Head")}
-function canUpdateTask(t){return isManager()||state.members.some(m=>m.committeeId===t.committeeId&&m.userId===state.user?.id)}
-function setConnection(text,good=false){$("#connectionState").textContent=text;$("#connectionState").style.color=good?"#16834b":""}
-async function api(action,data={}){return Api.request(action,{...data,...(state.token?userHeaders():{})})}
+function isHeadOf(committeeId){return !!state.user&&state.members.some(m=>m.committeeId===committeeId&&m.userId===state.user.id&&m.role==="Head"&&active(m.active))}
+function isMemberOf(committeeId){return !!state.user&&state.members.some(m=>m.committeeId===committeeId&&m.userId===state.user.id&&active(m.active))}
+function canManageMembers(committeeId){return isManager()||isHeadOf(committeeId)}
+function canCreateTasks(){return isManager()||state.committees.some(c=>isHeadOf(c.id))}
+function canEditTask(t){return isManager()||isHeadOf(t.committeeId)}
+function canUpdateTask(t){return isManager()||isMemberOf(t.committeeId)}
+function canEditFinance(){return isManager()||isHeadOf("COM-FIN")}
+function canDeleteFinance(entry){return isManager()||entry?.recordedBy===state.user?.id}
+function canEditFood(){return isManager()||isHeadOf("COM-FOOD")}
+function active(value){return value===true||value===1||String(value).toLowerCase()==="true"}
+function userName(id){return (state.bootstrap?.users||[]).find(u=>u.id===id)?.name||id||"Unknown"}
+function committeeName(id){return state.committees.find(c=>c.id===id)?.name||"Unassigned"}
+function committeeProgress(id){const ts=state.tasks.filter(t=>t.committeeId===id);return ts.length?Math.round(ts.reduce((n,t)=>n+(Number(t.progress)||0),0)/ts.length):0}
+function statusClass(value){return value==="Completed"||value==="Done"?"green":value==="Blocked"?"red":value==="In Progress"?"amber":""}
+function badge(value){return `<span class="badge ${statusClass(value)}">${esc(value||"Pending")}</span>`}
+async function api(action,data={}){
+  try{return await Api.request(action,state.token?{...data,token:state.token}:data)}
+  catch(err){
+    if(/session expired|sign in again/i.test(err.message)){
+      clearSession();renderAll();setConnection("Session expired");openLogin();
+    }
+    throw err;
+  }
+}
+function assertApiV2(response){if(Number(response?.apiVersion)!==2)throw new Error("The Apps Script deployment is not v2. Update Code.gs, deploy a NEW web-app version, and verify assets/js/api.js uses that /exec URL.")}
+function clearSession(){state.user=null;state.token=null;sessionClear();state.tasks=[];state.updates=[];state.finance=[];state.foodItems=[];state.activity=[]}
+
 async function init(){
   bindEvents();
-  try{
-    const b=await Api.request("bootstrap");
-    if(!b.ok)throw new Error(b.error||"Bootstrap failed");
-    state.bootstrap=b;state.committees=b.committees||[];state.members=b.members||[];
-    $("#loginUser").innerHTML=(b.users||[]).filter(u=>u.active).map(u=>`<option value="${esc(u.id)}">${esc(u.name)} · ${esc(u.position||u.accessRole)}</option>`).join("");
-    const saved=localStorage.getItem("pna_session");
-    if(saved){try{const s=JSON.parse(saved);state.user=s.user;state.token=s.token;await refreshData();return;}catch(e){localStorage.removeItem("pna_session");}}
-    setConnection("Sign in to update event records");openLogin();
-    renderAll();
-  }catch(e){setConnection("Database connection failed");toast(e.message);renderConnectionError(e.message)}
+  try {
+    await loadBootstrap();
+    const stored=sessionGet();
+    if(stored){
+      try{const sess=JSON.parse(stored);state.user=sess.user;state.token=sess.token;await refreshData();return}
+      catch(err){clearSession();toast("Your previous session expired. Sign in again.")}
+    }
+    renderAll();setConnection("Sign in to view event records");openLogin();
+  }catch(err){setConnection("Cannot connect to v2 database");renderConnectionError(err.message);toast(err.message)}
 }
-function renderConnectionError(message){$("#committeeList").innerHTML=`<div class="empty-state"><strong>Cannot connect to the event database</strong>${esc(message)}<br><br>Deploy the Apps Script backend and paste its URL into assets/js/api.js.</div>`}
+async function loadBootstrap(){
+  const result=await Api.request("bootstrap");
+  if(!result?.ok)throw new Error(result?.error||"Database setup failed");
+  assertApiV2(result);
+  state.bootstrap=result;state.committees=result.committees||[];state.members=result.members||[];
+  const select=$("#loginUser"),previous=select.value;
+  select.innerHTML=(result.users||[]).filter(u=>active(u.active)).map(u=>`<option value="${esc(u.id)}">${esc(u.name)} · ${esc(u.position||u.accessRole)}</option>`).join("");
+  if([...select.options].some(o=>o.value===previous))select.value=previous;
+  renderLoginPreview();
+}
+function renderConnectionError(message){$("#committeeList").innerHTML=`<div class="empty-state"><strong>Database connection needs attention</strong>${esc(message)}<p class="muted">Check the Apps Script v2 deployment, the shared /exec URL, and your spreadsheet schema.</p></div>`}
 async function refreshData(){
-  const d=await api("getData");
-  if(!d.ok)throw new Error(d.error||"Could not load data");
-  state.committees=d.committees||[];state.members=d.members||[];state.tasks=d.tasks||[];state.updates=d.updates||[];state.activity=d.activity||[];
+  if(!state.token){await loadBootstrap();renderAll();return}
+  const result=await api("getData");
+  if(!result?.ok)throw new Error(result?.error||"Could not load event records");
+  assertApiV2(result);
+  state.committees=result.committees||[];state.members=result.members||[];
+  state.tasks=result.tasks||[];state.updates=result.updates||[];state.activity=result.activity||[];
+  state.finance=result.finance||[];state.foodItems=result.foodItems||[];
+  if(state.bootstrap){state.bootstrap.members=state.members;state.bootstrap.committees=state.committees}
   setConnection(`Signed in as ${state.user.name}`,true);renderAll();
 }
 function bindEvents(){
   $$(".tab").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab)));
-  $("#refreshBtn").onclick=async()=>{try{await refreshData();toast("Data refreshed");}catch(e){toast(e.message)}};
+  $("#refreshBtn").onclick=async()=>{try{await loadBootstrap();await refreshData();toast("Data refreshed")}catch(err){toast(err.message)}};
   $("#profileBtn").onclick=()=>$("#profileMenu").classList.toggle("hidden");
-  $("#editProfileBtn").onclick=()=>{ $("#profileMenu").classList.add("hidden");openLogin(true); };
-  $("#signOutBtn").onclick=()=>{localStorage.removeItem("pna_session");state.user=null;state.token=null;$("#profileMenu").classList.add("hidden");openLogin();};
+  $("#editProfileBtn").onclick=()=>{$("#profileMenu").classList.add("hidden");openLogin(true)};
+  $("#signOutBtn").onclick=()=>{clearSession();$("#profileMenu").classList.add("hidden");renderAll();setConnection("Signed out");openLogin()};
+  $("#loginUser").onchange=renderLoginPreview;
   $("#loginForm").onsubmit=login;
   $("#addCommitteeBtn").onclick=()=>committeeEditor();
   $("#addTaskBtn").onclick=()=>taskEditor();
-  $("#taskCommitteeFilter").onchange=renderTasks;$("#taskStatusFilter").onchange=renderTasks;$("#taskSearch").oninput=renderTasks;
+  $("#addFinanceBtn").onclick=()=>financeEditor();
+  $("#addFoodBtn").onclick=()=>foodEditor();
+  $("#addMemberBtn").onclick=()=>{const committee=state.committees.find(c=>c.id===state.managingCommitteeId);if(committee)memberEditor(committee)};
+  $("#taskCommitteeFilter").onchange=renderTasks;
+  $("#taskStatusFilter").onchange=renderTasks;
+  $("#taskSearch").oninput=renderTasks;
   $("#exportBtn").onclick=exportCsv;
   $$("[data-close]").forEach(b=>b.onclick=()=>$("#"+b.dataset.close).close());
   $("#editForm").onsubmit=saveEditor;
-  document.addEventListener("click",e=>{if(!e.target.closest("#profileMenu")&&!e.target.closest("#profileBtn"))$("#profileMenu").classList.add("hidden");});
+  document.addEventListener("click",ev=>{if(!ev.target.closest("#profileMenu")&&!ev.target.closest("#profileBtn"))$("#profileMenu").classList.add("hidden")});
 }
-function switchTab(tab){state.activeTab=tab;$$(".tab").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));$$(".tab-panel").forEach(p=>p.classList.toggle("active",p.id==="tab-"+tab));}
-function openLogin(edit=false){$("#loginTitle").textContent=edit?"Switch user / profile":"Identify yourself";$("#loginPin").value="";$("#loginError").textContent="";$("#loginDialog").showModal();}
-async function login(e){
-  e.preventDefault();$("#loginError").textContent="";
+function switchTab(tab){
+  state.activeTab=tab;
+  $$(".tab").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));
+  $$(".tab-panel").forEach(panel=>panel.classList.toggle("active",panel.id==="tab-"+tab));
+}
+function renderLoginPreview(){
+  const userId=$("#loginUser").value;
+  const memberships=(state.bootstrap?.members||[]).filter(m=>m.userId===userId&&active(m.active));
+  const host=$("#loginPreview");
+  host.innerHTML=memberships.length
+    ? `<strong>Your committees (${memberships.length})</strong><div class="preview-list">${memberships.map(m=>`<div><b>${esc(committeeName(m.committeeId))}</b><span>${esc(m.role)}${m.supportRole?" · "+esc(m.supportRole):""}</span></div>`).join("")}</div>`
+    : '<span class="muted">No committee assignments yet. You can still sign in.</span>';
+}
+function openLogin(switching=false){
+  if($("#loginDialog").open)return;
+  $("#loginTitle").textContent=switching?"Switch profile":"Identify yourself";
+  $("#loginPassword").value="";$("#loginError").textContent="";
+  renderLoginPreview();$("#loginDialog").showModal();
+}
+async function login(ev){
+  ev.preventDefault();const form=$("#loginForm"),button=form.querySelector('button[type="submit"]');
+  const password=$("#loginPassword").value;
+  $("#loginError").textContent="";button.disabled=true;
   try{
-    const result=await Api.request("login",{userId:$("#loginUser").value,pin:$("#loginPin").value});
-    if(!result.ok)throw new Error(result.error||"Sign-in failed");
-    state.user=result.user;state.token=result.token;localStorage.setItem("pna_session",JSON.stringify({user:state.user,token:state.token}));
-    $("#loginDialog").close();await refreshData();renderProfile();toast(`Welcome, ${state.user.name}`);
-  }catch(err){$("#loginError").textContent=err.message;}
+    const result=await Api.request("login",{userId:$("#loginUser").value,password});
+    if(!result?.ok)throw new Error(result?.error||"Sign-in failed");
+    state.user=result.user;state.token=result.token;
+    sessionSet({user:state.user,token:state.token});
+    $("#loginDialog").close();
+    await refreshData();
+    const memberCount=state.members.filter(m=>m.userId===state.user.id&&active(m.active)).length;
+    toast(`Welcome, ${state.user.name}! ${memberCount} committee${memberCount===1?"":"s"} assigned.`);
+  }catch(err){$("#loginError").textContent=err.message}
+  finally{$("#loginPassword").value="";button.disabled=false}
 }
 function renderProfile(){
-  $("#profileName").textContent=state.user?.name||"Sign in";$("#avatar").textContent=initials(state.user?.name);
-  $("#menuUserName").textContent=state.user?.name||"Guest";$("#menuUserRole").textContent=state.user?`${state.user.position||state.user.accessRole} · ${state.user.accessRole}`:"Not signed in";
+  $("#profileName").textContent=state.user?.name||"Sign in";
+  $("#avatar").textContent=initials(state.user?.name);
+  $("#menuUserName").textContent=state.user?.name||"Guest";
+  $("#menuUserRole").textContent=state.user?`${state.user.position||""} · ${state.user.accessRole}`:"Not signed in";
   $$(".admin-only").forEach(el=>el.classList.toggle("hidden",!isManager()));
+  $("#addTaskBtn").classList.toggle("hidden",!canCreateTasks());
+  $("#addFinanceBtn").classList.toggle("hidden",!canEditFinance());
+  $("#addFoodBtn").classList.toggle("hidden",!canEditFood());
 }
-function renderAll(){renderProfile();renderSummary();renderCommittees();renderTasks();renderReports();populateFilters();}
+function renderAll(){
+  renderProfile();populateFilters();renderSummary();renderCommittees();renderTasks();renderFinance();renderFood();renderReports();
+  switchTab(state.activeTab);
+}
 function renderSummary(){
-  const total=state.tasks.length,completed=state.tasks.filter(t=>t.status==="Completed").length;
-  $("#sumCommittees").textContent=state.committees.length;$("#sumTasks").textContent=total;$("#sumCompleted").textContent=completed;
+  const done=state.tasks.filter(t=>t.status==="Completed").length;
+  $("#sumCommittees").textContent=state.committees.length;
+  $("#sumTasks").textContent=state.tasks.length;
+  $("#sumCompleted").textContent=done;
   $("#sumPending").textContent=state.tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length;
 }
-function committeeProgress(id){const ts=state.tasks.filter(t=>t.committeeId===id);if(!ts.length)return 0;return Math.round(ts.reduce((a,t)=>a+(Number(t.progress)||0),0)/ts.length)}
-function committeeName(id){return state.committees.find(c=>c.id===id)?.name||"Unassigned"}
-function committeeMembers(id){return state.members.filter(m=>m.committeeId===id).map(m=>`${m.name} (${m.role})`)}
 function renderCommittees(){
   const host=$("#committeeList");
-  if(!state.committees.length){host.innerHTML='<div class="empty-state"><strong>No committees found</strong>Ask the administrator to initialize the database.</div>';return;}
+  if(!state.committees.length){host.innerHTML='<div class="empty-state"><strong>No committees found</strong>Ask the Director to initialize the database.</div>';return}
   host.innerHTML=state.committees.map(c=>{
-    const ms=state.members.filter(m=>m.committeeId===c.id),heads=ms.filter(m=>m.role==="Head").map(m=>m.name);
-    const pct=committeeProgress(c.id);
-    return `<article class="committee-card" data-committee="${esc(c.id)}"><div class="card-top"><div><h3>${esc(c.name)}</h3><div class="head-line">Head: ${esc(heads.join(", ")||"To be assigned")}</div></div>${badge(c.active===false?"Inactive":"Active")}</div>
-      <div class="progress-row"><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div><span class="progress-value">${pct}%</span></div>
-      <div class="member-line">${ms.length?ms.map(m=>`<span class="member-pill">${esc(m.name)} · ${esc(m.role)}</span>`).join(""):"No members assigned"}</div>
-      ${canManageCommittee(c)?'<div class="task-actions"><button class="small-btn primary edit-committee">Manage members / edit</button></div>':""}</article>`;
+    const memberships=state.members.filter(m=>m.committeeId===c.id&&active(m.active));
+    const heads=memberships.filter(m=>m.role==="Head").map(m=>m.name);
+    const progress=committeeProgress(c.id);
+    return `<article class="committee-card" data-committee="${esc(c.id)}"><div class="card-top"><div><h3>${esc(c.name)}</h3><div class="head-line">Head${heads.length===1?"":"s"}: ${esc(heads.join(", ")||"To be assigned")}</div></div>${badge(active(c.active)?"Active":"Inactive")}</div>
+      ${c.description?`<p class="muted committee-desc">${esc(c.description)}</p>`:""}
+      <div class="progress-row"><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><span class="progress-value">${progress}%</span></div>
+      <div class="member-line">${memberships.length?memberships.map(m=>`<span class="member-pill">${esc(m.name)} · ${esc(m.role)}${m.supportRole?" · "+esc(m.supportRole):""}</span>`).join(""):"No members assigned"}</div>
+      <div class="task-actions">${canManageMembers(c.id)?`<button type="button" class="small-btn primary manage-members" data-id="${esc(c.id)}">Manage members</button>`:""}${isManager()?`<button type="button" class="small-btn edit-committee" data-id="${esc(c.id)}">Edit details</button>`:""}</div></article>`;
   }).join("");
-  host.querySelectorAll(".committee-card").forEach(card=>card.addEventListener("click",e=>{if(e.target.closest("button"))return;$("#taskCommitteeFilter").value=card.dataset.committee;switchTab("tasks");renderTasks();}));
-  host.querySelectorAll(".edit-committee").forEach((b,i)=>b.onclick=e=>{e.stopPropagation();const c=state.committees[i];committeeEditor(c);});
+  host.querySelectorAll(".committee-card").forEach(card=>card.onclick=ev=>{
+    if(ev.target.closest("button"))return;
+    $("#taskCommitteeFilter").value=card.dataset.committee;switchTab("tasks");renderTasks();
+  });
+  host.querySelectorAll(".manage-members").forEach(b=>b.onclick=()=>openMembers(b.dataset.id));
+  host.querySelectorAll(".edit-committee").forEach(b=>b.onclick=()=>committeeEditor(state.committees.find(c=>c.id===b.dataset.id)));
+}
+function openMembers(committeeId){
+  const c=state.committees.find(x=>x.id===committeeId);
+  if(!c||!canManageMembers(committeeId))return toast("You cannot manage this committee.");
+  state.managingCommitteeId=committeeId;
+  $("#membersTitle").textContent="Manage: "+c.name;
+  renderMembersDialog();
+  if(!$("#membersDialog").open)$("#membersDialog").showModal();
+}
+function renderMembersDialog(){
+  const committeeId=state.managingCommitteeId;
+  const c=state.committees.find(x=>x.id===committeeId);
+  if(!c)return;
+  const memberships=state.members.filter(m=>m.committeeId===committeeId&&active(m.active));
+  $("#membersList").innerHTML=memberships.length?memberships.map(m=>{
+    const editable=isManager()||m.role!=="Head";
+    return `<div class="manager-member-row"><div><strong>${esc(m.name)}</strong><p class="muted">${esc(m.role)}${m.supportRole?" · "+esc(m.supportRole):""}</p></div>
+    ${editable?`<div class="manager-member-actions"><button class="small-btn member-edit" data-id="${esc(m.id)}" type="button">Edit</button><button class="small-btn danger-text member-remove" data-id="${esc(m.id)}" type="button">Remove</button></div>`:"<span class=\"muted\">Director only</span>"}</div>`;
+  }).join(""):'<div class="empty-state">No members assigned yet.</div>';
+  $("#membersList").querySelectorAll(".member-edit").forEach(b=>b.onclick=()=>memberEditor(c,state.members.find(m=>m.id===b.dataset.id)));
+  $("#membersList").querySelectorAll(".member-remove").forEach(b=>b.onclick=async()=>{
+    const member=state.members.find(m=>m.id===b.dataset.id);
+    if(!member)return;
+    if(!await confirmAction(`Remove ${member.name} from ${c.name}? Existing task history will remain.`))return;
+    try{const result=await api("removeMember",{memberId:member.id});if(!result?.ok)throw new Error(result?.error||"Unable to remove member");await refreshData();renderMembersDialog();toast("Member removed")}
+    catch(err){toast(err.message)}
+  });
 }
 function populateFilters(){
-  $("#taskCommitteeFilter").innerHTML='<option value="">All committees</option>'+state.committees.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+  const filter=$("#taskCommitteeFilter"),current=filter.value;
+  filter.innerHTML='<option value="">All committees</option>'+state.committees.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
+  if([...filter.options].some(o=>o.value===current))filter.value=current;
 }
 function renderTasks(){
-  const cid=$("#taskCommitteeFilter").value,status=$("#taskStatusFilter").value,q=$("#taskSearch").value.toLowerCase();
-  const list=state.tasks.filter(t=>(!cid||t.committeeId===cid)&&(!status||t.status===status)&&(!q||(t.title+" "+(t.description||"")+" "+committeeName(t.committeeId)).toLowerCase().includes(q)));
-  $("#taskList").innerHTML=list.length?list.map(t=>{
-    const assigned=(t.assigneeIds||[]).map(id=>state.bootstrap.users.find(u=>u.id===id)?.name||id).join(", ")||"Not assigned";
-    return `<article class="task-card"><div class="task-card-top"><div><h3>${esc(t.title)}</h3><div class="task-meta"><span>${esc(committeeName(t.committeeId))}</span><span>·</span><span>Assigned: ${esc(assigned)}</span></div></div>${badge(t.status)}</div>
-      ${t.description?`<p class="muted" style="margin-top:9px">${esc(t.description)}</p>`:""}
-      <div class="progress-row"><div class="progress-track"><div class="progress-fill" style="width:${Number(t.progress)||0}%"></div></div><span class="progress-value">${Number(t.progress)||0}%</span></div>
-      <div class="task-meta" style="margin-top:8px"><span>Due: ${esc(t.dueDate||"Not set")}</span><span>·</span><span>Priority: ${esc(t.priority||"Normal")}</span></div>
+  const committeeId=$("#taskCommitteeFilter").value,status=$("#taskStatusFilter").value,query=$("#taskSearch").value.toLowerCase();
+  const matches=state.tasks.filter(t=>(!committeeId||t.committeeId===committeeId)&&(!status||t.status===status)&&(!query||(t.title+" "+(t.description||"")+" "+committeeName(t.committeeId)).toLowerCase().includes(query)));
+  $("#taskList").innerHTML=matches.length?matches.map(t=>{
+    const names=(Array.isArray(t.assigneeIds)?t.assigneeIds:[]).map(userName).join(", ")||"Not assigned";
+    const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
+    return `<article class="task-card"><div class="task-card-top"><div><h3>${esc(t.title)}</h3><div class="task-meta"><span>${esc(committeeName(t.committeeId))}</span><span>·</span><span>Assigned: ${esc(names)}</span></div></div>${badge(t.status)}</div>
+      ${t.description?`<p class="muted task-description">${esc(t.description)}</p>`:""}
+      <div class="progress-row"><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><span class="progress-value">${progress}%</span></div>
+      <div class="task-meta task-details"><span>Due: ${esc(t.dueDate||"Not set")}</span><span>·</span><span>Priority: ${esc(t.priority||"Normal")}</span></div>
       ${t.latestUpdate?`<div class="task-note">Latest update: ${esc(t.latestUpdate)}</div>`:""}
-      <div class="task-actions">${canUpdateTask(t)?`<button class="small-btn primary update-task" data-id="${esc(t.id)}">Update progress</button>`:""}${isManager()?`<button class="small-btn edit-task" data-id="${esc(t.id)}">Edit task</button>`:""}<button class="small-btn history-task" data-id="${esc(t.id)}">Update history</button></div>
-    </article>`;
-  }).join(""):'<div class="empty-state"><strong>No tasks match</strong>Try changing your filters or add a task.</div>';
+      <div class="task-actions">${canUpdateTask(t)?`<button class="small-btn primary update-task" data-id="${esc(t.id)}">Update progress</button><button class="small-btn history-task" data-id="${esc(t.id)}">History</button>`:""}${canEditTask(t)?`<button class="small-btn edit-task" data-id="${esc(t.id)}">Edit task</button>`:""}</div></article>`;
+  }).join(""):'<div class="empty-state"><strong>No matching tasks</strong>Try another filter or add a task.</div>';
   $$(".update-task").forEach(b=>b.onclick=()=>updateTaskEditor(state.tasks.find(t=>t.id===b.dataset.id)));
-  $$(".edit-task").forEach(b=>b.onclick=()=>taskEditor(state.tasks.find(t=>t.id===b.dataset.id)));
   $$(".history-task").forEach(b=>b.onclick=()=>showHistory(b.dataset.id));
+  $$(".edit-task").forEach(b=>b.onclick=()=>taskEditor(state.tasks.find(t=>t.id===b.dataset.id)));
+}
+function renderFinance(){
+  const sum=type=>state.finance.filter(entry=>entry.type===type).reduce((n,entry)=>n+(Number(entry.amount)||0),0);
+  const cash=sum("Cash on Hand"),income=sum("Income"),expenses=sum("Expense");
+  $("#financeCash").textContent=money(cash);$("#financeIncome").textContent=money(income);
+  $("#financeExpenses").textContent=money(expenses);$("#financeBalance").textContent=money(cash+income-expenses);
+  const sorted=[...state.finance].sort((a,b)=>String(b.date||b.createdAt).localeCompare(String(a.date||a.createdAt)));
+  $("#financeList").innerHTML=sorted.length?sorted.map(item=>`<article class="list-card"><div class="list-card-content"><div class="list-card-head"><strong>${esc(item.description)}</strong>${badge(item.type)}</div><p class="muted">${esc(item.date||"")} · ${esc(item.recordedByName||"")}</p></div><strong class="amount ${item.type==="Expense"?"amount-negative":""}">${item.type==="Expense"?"−":""}${money(item.amount)}</strong><div class="list-actions">${canEditFinance()?`<button type="button" class="small-btn finance-edit" data-id="${esc(item.id)}">Edit</button>`:""}${canDeleteFinance(item)?`<button type="button" class="small-btn danger-text finance-delete" data-id="${esc(item.id)}">Delete</button>`:""}</div></article>`).join(""):'<div class="empty-state"><strong>No finance entries yet</strong>Finance Heads or Directors can add the first record.</div>';
+  $$(".finance-edit").forEach(b=>b.onclick=()=>financeEditor(state.finance.find(x=>x.id===b.dataset.id)));
+  $$(".finance-delete").forEach(b=>b.onclick=async()=>{
+    const entry=state.finance.find(x=>x.id===b.dataset.id);if(!entry)return;
+    if(!await confirmAction(`Delete ${money(entry.amount)} — ${entry.description}? This cannot be undone.`))return;
+    try{const r=await api("deleteFinance",{id:entry.id});if(!r?.ok)throw new Error(r?.error||"Delete failed");await refreshData();toast("Finance entry deleted")}
+    catch(err){toast(err.message)}
+  });
+}
+function renderFood(){
+  const done=state.foodItems.filter(item=>item.status==="Done").length,total=state.foodItems.length;
+  $("#foodSummary").innerHTML=`<div class="summary-card"><span>Food list progress</span><strong>${done}/${total} completed</strong></div>`;
+  $("#foodList").innerHTML=["Food","Drink","Other"].map(category=>{
+    const items=state.foodItems.filter(item=>item.category===category);
+    return `<section class="panel food-group"><div class="food-group-heading"><h3>${esc(category)}</h3><span class="badge">${items.length} item${items.length===1?"":"s"}</span></div>${items.length?items.map(item=>`<article class="food-row"><div class="food-text"><div class="food-name">${esc(item.item)} ${badge(item.status)}</div><p class="muted">${item.quantity?`Qty: ${esc(item.quantity)} · `:""}Assigned: ${esc(item.assignedToName||"Unassigned")}</p>${item.remarks?`<div class="task-note">${esc(item.remarks)}</div>`:""}</div><div class="food-actions">${canEditFood()?`<button type="button" class="small-btn primary food-toggle" data-id="${esc(item.id)}">${item.status==="Done"?"Mark Todo":"Mark Done"}</button><button type="button" class="small-btn food-edit" data-id="${esc(item.id)}">Edit</button><button type="button" class="small-btn danger-text food-delete" data-id="${esc(item.id)}">Delete</button>`:""}</div></article>`).join(""):'<p class="muted">No items in this category.</p>'}</section>`;
+  }).join("");
+  $$(".food-edit").forEach(b=>b.onclick=()=>foodEditor(state.foodItems.find(x=>x.id===b.dataset.id)));
+  $$(".food-toggle").forEach(b=>b.onclick=async()=>{
+    const item=state.foodItems.find(x=>x.id===b.dataset.id);if(!item)return;
+    try{const r=await api("saveFoodItem",{item:{...item,status:item.status==="Done"?"Todo":"Done"}});if(!r?.ok)throw new Error(r?.error||"Status update failed");await refreshData();toast("Food item updated")}
+    catch(err){toast(err.message)}
+  });
+  $$(".food-delete").forEach(b=>b.onclick=async()=>{
+    const item=state.foodItems.find(x=>x.id===b.dataset.id);if(!item)return;
+    if(!await confirmAction(`Delete ${item.item} from the food list?`))return;
+    try{const r=await api("deleteFoodItem",{id:item.id});if(!r?.ok)throw new Error(r?.error||"Delete failed");await refreshData();toast("Food item deleted")}
+    catch(err){toast(err.message)}
+  });
 }
 function renderReports(){
-  const total=state.tasks.length,done=state.tasks.filter(t=>t.status==="Completed").length,blocked=state.tasks.filter(t=>t.status==="Blocked").length,pending=state.tasks.filter(t=>t.status==="Pending").length;
-  const pct=total?Math.round(state.tasks.reduce((a,t)=>a+(Number(t.progress)||0),0)/total):0;
-  $("#reportOverview").innerHTML=`<div class="completion-card"><span class="muted">Overall task progress</span><strong>${pct}%</strong><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div></div><div class="report-stats"><div class="report-stat"><span>Total tasks</span><strong>${total}</strong></div><div class="report-stat"><span>Completed</span><strong style="color:var(--green)">${done}</strong></div><div class="report-stat"><span>Pending</span><strong style="color:var(--amber)">${pending}</strong></div><div class="report-stat"><span>In progress</span><strong>${state.tasks.filter(t=>t.status==="In Progress").length}</strong></div><div class="report-stat"><span>Blocked</span><strong style="color:var(--red)">${blocked}</strong></div><div class="report-stat"><span>Committees</span><strong>${state.committees.length}</strong></div></div>`;
-  $("#reportCommittees").innerHTML=state.committees.map(c=>`<div class="report-line"><div class="report-line-head"><strong>${esc(c.name)}</strong><span>${committeeProgress(c.id)}%</span></div><div class="progress-track"><div class="progress-fill" style="width:${committeeProgress(c.id)}%"></div></div></div>`).join("")||'<p class="muted">No committees.</p>';
+  const total=state.tasks.length,done=state.tasks.filter(t=>t.status==="Completed").length;
+  const blocked=state.tasks.filter(t=>t.status==="Blocked").length;
+  const pending=state.tasks.filter(t=>t.status==="Pending").length;
+  const progress=total?Math.round(state.tasks.reduce((n,t)=>n+(Number(t.progress)||0),0)/total):0;
+  $("#reportOverview").innerHTML=`<div class="completion-card"><span class="muted">Overall task progress</span><strong>${progress}%</strong><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div></div><div class="report-stats"><div class="report-stat"><span>Total tasks</span><strong>${total}</strong></div><div class="report-stat"><span>Completed</span><strong style="color:var(--green)">${done}</strong></div><div class="report-stat"><span>Pending</span><strong>${pending}</strong></div><div class="report-stat"><span>In progress</span><strong>${state.tasks.filter(t=>t.status==="In Progress").length}</strong></div><div class="report-stat"><span>Blocked</span><strong>${blocked}</strong></div><div class="report-stat"><span>Committees</span><strong>${state.committees.length}</strong></div></div>`;
+  $("#reportCommittees").innerHTML=state.committees.map(c=>`<div class="report-line"><div class="report-line-head"><strong>${esc(c.name)}</strong><span>${committeeProgress(c.id)}%</span></div><div class="progress-track"><div class="progress-fill" style="width:${committeeProgress(c.id)}%"></div></div></div>`).join("")||'<p class="muted">No committees found.</p>';
   const attention=state.tasks.filter(t=>["Pending","Blocked"].includes(t.status)||(t.dueDate&&new Date(t.dueDate+"T23:59:59")<new Date()&&t.status!=="Completed"));
   $("#reportPending").innerHTML=attention.length?attention.map(t=>`<div class="attention-item"><strong>${esc(t.title)} ${badge(t.status)}</strong><small>${esc(committeeName(t.committeeId))} · Due ${esc(t.dueDate||"No deadline")}</small></div>`).join(""):'<div class="empty-state">No pending or blocked tasks.</div>';
-  $("#activityList").innerHTML=state.activity.slice(0,12).map(a=>`<div class="activity-item"><strong>${esc(a.actorName||"Member")}</strong> ${esc(a.message||"updated a record")}<br><small>${esc(a.timestamp||"")}</small></div>`).join("")||'<p class="muted">No activity recorded yet.</p>';
+  $("#activityList").innerHTML=state.activity.slice(0,12).map(a=>`<div class="activity-item"><strong>${esc(a.actorName||"Member")}</strong> ${esc(a.message||"updated an item")}<br><small>${esc(a.timestamp||"")}</small></div>`).join("")||'<p class="muted">No activity recorded yet.</p>';
 }
-function openEditor(title,fields,submitAction,initial={}){
-  $("#editTitle").textContent=title;$("#editError").textContent="";$("#editFields").innerHTML=fields.map(f=>fieldHtml(f,initial[f.name])).join("");
-  $("#editForm").dataset.action=submitAction;$("#editForm").dataset.recordId=initial.id||"";$("#editDialog").showModal();
+
+// Editors and forms
+function fieldHtml(field,value){
+  const v=value??field.value??"",required=field.required?" required":"";
+  if(field.type==="hidden")return `<input type="hidden" name="${esc(field.name)}" value="${esc(v)}">`;
+  if(field.type==="textarea")return `<label class="field"><span>${esc(field.label)}</span><textarea class="form-input" name="${esc(field.name)}" rows="3"${required}>${esc(v)}</textarea></label>`;
+  if(field.type==="select")return `<label class="field"><span>${esc(field.label)}</span><select class="form-input" name="${esc(field.name)}"${required}>${field.options.map(option=>`<option value="${esc(option.value)}"${String(v)===String(option.value)?" selected":""}>${esc(option.label)}</option>`).join("")}</select></label>`;
+  if(field.type==="chips"){
+    const picked=Array.isArray(v)?v:[];
+    return `<fieldset class="chip-field"><legend>${esc(field.label)}</legend><div class="chip-list">${field.options.map(option=>`<label class="chip-option"><input type="checkbox" name="${esc(field.name)}" value="${esc(option.value)}"${picked.includes(option.value)?" checked":""}><span>${esc(option.label)}</span></label>`).join("")}</div></fieldset>`;
+  }
+  if(field.type==="checkbox")return `<label class="toggle-line"><input type="checkbox" name="${esc(field.name)}" value="true"${v===true||v==="true"?" checked":""}><span>${esc(field.label)}${field.hint?`<small class="form-hint">${esc(field.hint)}</small>`:""}</span></label>`;
+  return `<label class="field"><span>${esc(field.label)}</span><input class="form-input" name="${esc(field.name)}" type="${esc(field.type||"text")}" value="${esc(v)}"${required}${field.min!==undefined?` min="${esc(field.min)}"`:""}${field.max!==undefined?` max="${esc(field.max)}"`:""}${field.step!==undefined?` step="${esc(field.step)}"`:""}></label>`;
 }
-function fieldHtml(f,value){
-  const v=value??f.value??"";
-  if(f.type==="textarea")return `<label class="field"><span>${esc(f.label)}</span><textarea class="form-input" name="${esc(f.name)}" rows="3" ${f.required?"required":""}>${esc(v)}</textarea></label>`;
-  if(f.type==="select")return `<label class="field"><span>${esc(f.label)}</span><select class="form-input" name="${esc(f.name)}" ${f.required?"required":""}>${f.options.map(o=>`<option value="${esc(o.value)}" ${String(v)===String(o.value)?"selected":""}>${esc(o.label)}</option>`).join("")}</select></label>`;
-  if(f.type==="multi")return `<label class="field"><span>${esc(f.label)}</span><select class="form-input" name="${esc(f.name)}" multiple size="5">${f.options.map(o=>`<option value="${esc(o.value)}" ${(Array.isArray(v)?v:[]).includes(o.value)?"selected":""}>${esc(o.label)}</option>`).join("")}</select><small class="form-hint">Use Ctrl/Command to select multiple people on desktop.</small></label>`;
-  return `<label class="field"><span>${esc(f.label)}</span><input class="form-input" name="${esc(f.name)}" type="${f.type||"text"}" value="${esc(Array.isArray(v)?v.join(","):v)}" ${f.required?"required":""} ${f.min!==undefined?`min="${f.min}"`:""} ${f.max!==undefined?`max="${f.max}"`:""}></label>`;
+function openEditor(title,fields,action,initial={}){
+  if($("#editDialog").open)$("#editDialog").close();
+  $("#editTitle").textContent=title;$("#editError").textContent="";
+  $("#editFields").innerHTML=fields.map(f=>fieldHtml(f,initial[f.name])).join("");
+  $("#editForm").dataset.action=action;$("#editForm").dataset.recordId=initial.id||"";
+  $("#editForm").querySelector('button[type="submit"]').classList.toggle("hidden",action==="readonly");
+  $("#editDialog").showModal();
 }
 function committeeEditor(c=null){
-  if(!isManager())return toast("Only event management can add committees.");
-  const fields=[{name:"name",label:"Committee name",required:true},{name:"description",label:"Description",type:"textarea"}];
-  openEditor(c?"Edit committee":"Add committee",fields,"saveCommittee",c||{});
+  if(!isManager())return toast("Only Directors can edit committee details.");
+  openEditor(c?"Edit committee":"Add committee",[
+    {name:"name",label:"Committee name",required:true},
+    {name:"description",label:"Description",type:"textarea"}
+  ],"saveCommittee",c||{});
+}
+function memberEditor(committee,member=null){
+  if(!committee||!canManageMembers(committee.id))return toast("Access denied.");
+  if(member?.role==="Head"&&!isManager())return toast("Only Directors can change Head assignments.");
+  const eligible=(state.bootstrap?.users||[]).filter(u=>active(u.active));
+  const fields=[
+    {name:"committeeId",type:"hidden",value:committee.id},
+    {name:"userId",label:"Person",type:"select",required:true,options:eligible.map(u=>({value:u.id,label:u.name}))},
+    {name:"role",label:"Committee role",type:"select",options:isManager()?[{value:"Head",label:"Head"},{value:"Support",label:"Support"}]:[{value:"Support",label:"Support"}]},
+    {name:"supportRole",label:"Specific responsibility / support role"}
+  ];
+  if($("#membersDialog").open)$("#membersDialog").close();
+  openEditor(member?"Edit committee assignment":"Assign committee member",fields,"saveMember",member?{...member,committeeId:committee.id}:{committeeId:committee.id,role:isManager()?"Support":"Support"});
 }
 function taskEditor(t=null){
   if(!state.user)return openLogin();
-  if(t&&!isManager())return toast("Only event management can edit task details.");
+  if(t&&!canEditTask(t))return toast("Only Directors or this committee's Heads can edit task details.");
+  const allowed=isManager()?state.committees:state.committees.filter(c=>isHeadOf(c.id));
+  if(!allowed.length)return toast("You need a committee Head role to create tasks.");
   const fields=[
-    {name:"title",label:"Task title",required:true},{name:"committeeId",label:"Committee",type:"select",required:true,options:state.committees.map(c=>({value:c.id,label:c.name}))},
+    {name:"title",label:"Task title",required:true},
+    {name:"committeeId",label:"Committee",type:"select",required:true,options:allowed.map(c=>({value:c.id,label:c.name}))},
     {name:"description",label:"Description",type:"textarea"},
-    {name:"assigneeIds",label:"Assigned members",type:"multi",options:state.bootstrap.users.filter(u=>u.active).map(u=>({value:u.id,label:u.name})) ,value:t?.assigneeIds||[]},
+    {name:"assigneeIds",label:"Assigned members (tap to select multiple)",type:"chips",options:(state.bootstrap?.users||[]).filter(u=>active(u.active)).map(u=>({value:u.id,label:u.name}))},
+    {name:"addAssigneesAsSupport",label:"Also add assignees to this committee as Support",type:"checkbox",value:true,hint:"Recommended: keeps assignments and the committee directory synchronized."},
     {name:"priority",label:"Priority",type:"select",options:["Low","Normal","High","Urgent"].map(x=>({value:x,label:x}))},
     {name:"dueDate",label:"Due date",type:"date"}
   ];
-  openEditor(t?"Edit task":"Create task",fields,"saveTask",t||{priority:"Normal",dueDate:"2026-12-10"});
+  openEditor(t?"Edit task":"Create task",fields,"saveTask",t?{...t,addAssigneesAsSupport:true}:{committeeId:allowed[0].id,assigneeIds:[],priority:"Normal",dueDate:"2026-12-10",addAssigneesAsSupport:true});
 }
-function updateTaskEditor(t){
-  const fields=[
+function updateTaskEditor(task){
+  if(!task||!canUpdateTask(task))return toast("You cannot update this task.");
+  openEditor("Update task progress",[
     {name:"status",label:"Status",type:"select",options:["Pending","In Progress","Blocked","Completed"].map(x=>({value:x,label:x}))},
-    {name:"progress",label:"Progress (%)",type:"number",min:0,max:100},
+    {name:"progress",label:"Progress (%)",type:"number",min:0,max:100,step:1},
     {name:"updateNote",label:"Progress update / comment",type:"textarea",required:true}
-  ];
-  openEditor("Update task progress",fields,"updateTask",{...t,updateNote:""});
+  ],"updateTask",{...task,updateNote:""});
 }
-async function saveEditor(e){
-  e.preventDefault();const action=e.target.dataset.action,recordId=e.target.dataset.recordId;
-  const data={};new FormData(e.target).forEach((v,k)=>data[k]=v);
-  e.target.querySelectorAll('select[multiple]').forEach(el=>data[el.name]=[...el.selectedOptions].map(o=>o.value));
-  if(recordId)data.id=recordId;
+function financeEditor(entry=null){
+  if(!canEditFinance())return toast("Only the Finance Heads or Directors may edit finance records.");
+  openEditor(entry?"Edit finance entry":"Add finance entry",[
+    {name:"type",label:"Entry type",type:"select",options:["Cash on Hand","Income","Expense"].map(x=>({value:x,label:x}))},
+    {name:"amount",label:"Amount (PHP)",type:"number",min:0.01,step:0.01,required:true},
+    {name:"description",label:"Description",required:true},
+    {name:"date",label:"Date",type:"date",required:true}
+  ],"saveFinance",entry||{type:"Income",date:TODAY()});
+}
+function foodEditor(item=null){
+  if(!canEditFood())return toast("Only the Food Heads or Directors may edit this list.");
+  openEditor(item?"Edit food / supply item":"Add food / supply item",[
+    {name:"item",label:"Item name",required:true},
+    {name:"category",label:"Category",type:"select",options:["Food","Drink","Other"].map(x=>({value:x,label:x}))},
+    {name:"quantity",label:"Quantity / unit"},
+    {name:"remarks",label:"Remarks",type:"textarea"},
+    {name:"assignedTo",label:"Assigned person",type:"select",options:[{value:"",label:"Not yet assigned"},...(state.bootstrap?.users||[]).filter(u=>active(u.active)).map(u=>({value:u.id,label:u.name}))]},
+    {name:"status",label:"Status",type:"select",options:["Todo","Done"].map(x=>({value:x,label:x}))}
+  ],"saveFoodItem",item||{category:"Food",assignedTo:"",status:"Todo"});
+}
+function collectFields(form){
+  const data={};
+  new FormData(form).forEach((value,key)=>{if(data[key]===undefined)data[key]=value;else if(Array.isArray(data[key]))data[key].push(value);else data[key]=[data[key],value]});
+  form.querySelectorAll('.chip-field').forEach(group=>{
+    const first=group.querySelector('input[type="checkbox"]');
+    if(first)data[first.name]=[...group.querySelectorAll('input:checked')].map(x=>x.value);
+  });
+  form.querySelectorAll('.toggle-line input[type="checkbox"]').forEach(input=>data[input.name]=input.checked);
+  return data;
+}
+async function saveEditor(ev){
+  ev.preventDefault();
+  const form=ev.target,action=form.dataset.action,recordId=form.dataset.recordId;
+  if(action==="readonly")return;
+  const data=collectFields(form);if(recordId)data.id=recordId;
+  if(action==="saveTask"){
+    const previously=state.tasks.find(t=>t.id===recordId);
+    if(previously&&!isManager()&&data.committeeId!==previously.committeeId){$("#editError").textContent="Only Directors may move tasks to another committee.";return}
+  }
+  const button=form.querySelector('button[type="submit"]');button.disabled=true;$("#editError").textContent="";
   try{
-    let result;
-    if(action==="saveCommittee")result=await api("saveCommittee",{committee:data});
-    if(action==="saveTask")result=await api("saveTask",{task:data});
-    if(action==="updateTask")result=await api("updateTask",{taskId:recordId,update:{status:data.status,progress:Number(data.progress),note:data.updateNote}});
-    if(!result?.ok)throw new Error(result?.error||"Save failed");
-    $("#editDialog").close();await refreshData();toast("Changes saved");
-  }catch(err){$("#editError").textContent=err.message;}
+    let response;
+    switch(action){
+      case "saveCommittee":response=await api(action,{committee:data});break;
+      case "saveMember":response=await api(action,{member:data});break;
+      case "saveTask":response=await api(action,{task:data});break;
+      case "updateTask":response=await api(action,{taskId:recordId,update:{status:data.status,progress:Number(data.progress),note:data.updateNote}});break;
+      case "saveFinance":response=await api(action,{entry:data});break;
+      case "saveFoodItem":response=await api(action,{item:data});break;
+      default:throw new Error("Unsupported form action")
+    }
+    if(!response?.ok)throw new Error(response?.error||"Save failed");
+    $("#editDialog").close();await refreshData();toast("Changes saved successfully");
+    if(action==="saveMember"&&state.managingCommitteeId&&canManageMembers(state.managingCommitteeId))openMembers(state.managingCommitteeId);
+  }catch(err){$("#editError").textContent=err.message}
+  finally{button.disabled=false}
 }
 async function showHistory(taskId){
-  try{const r=await api("getTaskUpdates",{taskId});const items=r.updates||[];openEditor("Task update history",[{name:"history",label:"Updates",type:"textarea"}],"noop",{history:items.map(x=>`${x.timestamp} — ${x.actorName}: ${x.status}, ${x.progress}%\n${x.note}`).join("\n\n")||"No updates yet."});$("#editForm").querySelector('[name="history"]').readOnly=true;$("#editForm").querySelector('button[type="submit"]').classList.add("hidden");}
-  catch(e){toast(e.message)}
+  try{
+    const response=await api("getTaskUpdates",{taskId});
+    if(!response?.ok)throw new Error(response?.error||"Cannot load updates");
+    const value=(response.updates||[]).map(x=>`${x.timestamp} — ${x.actorName}: ${x.status} (${x.progress}%)\n${x.note}`).join("\n\n")||"No updates yet.";
+    openEditor("Task update history",[{name:"history",label:"Recorded updates",type:"textarea"}],"readonly",{history:value});
+    $("#editForm").querySelector('[name="history"]').readOnly=true;
+  }catch(err){toast(err.message)}
+}
+function confirmAction(message){
+  return new Promise(resolve=>{
+    const dlg=$("#confirmDialog");$("#confirmMessage").textContent=message;
+    let finished=false;
+    const finish=value=>{if(finished)return;finished=true;dlg.removeEventListener("close",onClose);if(dlg.open)dlg.close();resolve(value)};
+    const onClose=()=>finish(false);
+    $("#confirmYes").onclick=()=>finish(true);
+    $("#confirmNo").onclick=()=>finish(false);
+    $("#confirmDismiss").onclick=()=>finish(false);
+    dlg.addEventListener("close",onClose);
+    dlg.showModal();
+  });
 }
 function exportCsv(){
-  const rows=[["Committee","Task","Assignees","Status","Progress","Priority","Due date"],...state.tasks.map(t=>[committeeName(t.committeeId),t.title,(t.assigneeIds||[]).map(id=>state.bootstrap.users.find(u=>u.id===id)?.name||id).join("; "),t.status,t.progress,t.priority,t.dueDate])];
-  const csv=rows.map(r=>r.map(x=>'"'+String(x??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");
-  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="pasko-ng-angkan-2026-report.csv";a.click();URL.revokeObjectURL(a.href);
+  const rows=[["Committee","Task","Assignees","Status","Progress","Priority","Due date"],...state.tasks.map(t=>[
+    committeeName(t.committeeId),t.title,(Array.isArray(t.assigneeIds)?t.assigneeIds:[]).map(userName).join("; "),t.status,t.progress,t.priority,t.dueDate
+  ])];
+  const csv="\ufeff"+rows.map(row=>row.map(value=>'"'+String(value??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);
+  const link=document.createElement("a");link.href=url;link.download="pasko-ng-angkan-2026-report.csv";link.click();setTimeout(()=>URL.revokeObjectURL(url),250);
 }
 init();

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#172554">
   <meta name="description" content="Pasko ng Angkan 2026 event management">
   <title>Pasko ng Angkan 2026</title>
-  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/style.css?v=2.1">
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -43,6 +43,8 @@
       <nav class="tabs" aria-label="Main navigation">
         <button class="tab active" data-tab="committees"><span>♧</span> Committees</button>
         <button class="tab" data-tab="tasks"><span>☷</span> To-do list</button>
+        <button class="tab" data-tab="finance"><span>₱</span> Finance</button>
+        <button class="tab" data-tab="food"><span>♨</span> Food list</button>
         <button class="tab" data-tab="reports"><span>▥</span> Reports</button>
       </nav>
 
@@ -65,6 +67,30 @@
           <label class="field search-field"><span>Search</span><input id="taskSearch" type="search" placeholder="Find a task…"></label>
         </div>
         <div id="taskList" class="task-list"><div class="loading">Loading tasks…</div></div>
+      </section>
+
+      <section id="tab-finance" class="tab-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">FINANCE & PROCUREMENT</p><h2>Finance tracker</h2><p class="muted">Opening cash, income, expenses and the available balance.</p></div>
+          <button id="addFinanceBtn" class="primary-btn hidden">＋ Add entry</button>
+        </div>
+        <div class="summary-grid finance-grid">
+          <article class="summary-card"><span>Cash on hand</span><strong id="financeCash">₱0.00</strong></article>
+          <article class="summary-card"><span>Income</span><strong id="financeIncome">₱0.00</strong></article>
+          <article class="summary-card"><span>Expenses</span><strong id="financeExpenses">₱0.00</strong></article>
+          <article class="summary-card accent-card"><span>Available balance</span><strong id="financeBalance">₱0.00</strong></article>
+        </div>
+        <p class="section-note">Cash on Hand entries are added together as opening cash. Record new contributions as Income to avoid double counting.</p>
+        <div id="financeList" class="stack-list"></div>
+      </section>
+
+      <section id="tab-food" class="tab-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">FOOD & FELLOWSHIP</p><h2>Food and supplies</h2><p class="muted">Keep track of what's needed, who's assigned and what is ready.</p></div>
+          <button id="addFoodBtn" class="primary-btn hidden">＋ Add item</button>
+        </div>
+        <div id="foodSummary" class="food-summary"></div>
+        <div id="foodList" class="food-groups"></div>
       </section>
 
       <section id="tab-reports" class="tab-panel">
@@ -90,12 +116,13 @@
   <dialog id="loginDialog" class="modal">
     <form id="loginForm" class="modal-card">
       <div class="modal-title"><div><p class="eyebrow">WELCOME</p><h2 id="loginTitle">Identify yourself</h2></div><button type="button" class="close-btn" data-close="loginDialog">×</button></div>
-      <p class="muted">Choose your name and enter your personal PIN. Your updates will be recorded under your profile.</p>
+      <p class="muted">Choose your name and enter the shared group password. Your changes will be attributed to your profile.</p>
       <label class="field"><span>Your name</span><select id="loginUser" required></select></label>
-      <label class="field"><span>Personal PIN</span><input id="loginPin" type="password" inputmode="numeric" minlength="4" maxlength="12" autocomplete="current-password" placeholder="Enter your PIN" required></label>
+      <div id="loginPreview" class="login-preview" aria-live="polite"></div>
+      <label class="field"><span>Group password</span><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Enter group password" required></label>
       <p id="loginError" class="form-error"></p>
       <button class="primary-btn full-width" type="submit">Continue</button>
-      <small class="muted">New member? Ask the event administrator to add your profile and issue a PIN.</small>
+      <small class="muted">New member? Ask the Director or Assistant Director to add your profile. Do not share the group password outside the event team.</small>
     </form>
   </dialog>
 
@@ -109,8 +136,27 @@
     </form>
   </dialog>
 
+  <!-- Committee membership manager -->
+  <dialog id="membersDialog" class="modal wide-modal">
+    <div class="modal-card">
+      <div class="modal-title"><div><p class="eyebrow">PEOPLE & ROLES</p><h2 id="membersTitle">Manage members</h2></div><button type="button" class="close-btn" data-close="membersDialog" aria-label="Close">×</button></div>
+      <p class="muted">Directors can assign Heads or Support. Committee Heads can add or edit Support members in their own committee.</p>
+      <div id="membersList" class="member-manager-list"></div>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="membersDialog">Close</button><button type="button" id="addMemberBtn" class="primary-btn">＋ Assign person</button></div>
+    </div>
+  </dialog>
+
+  <!-- Confirmation dialog: prevents accidental deletion -->
+  <dialog id="confirmDialog" class="modal">
+    <div class="modal-card">
+      <div class="modal-title"><div><p class="eyebrow">PLEASE CONFIRM</p><h2>Are you sure?</h2></div><button type="button" id="confirmDismiss" class="close-btn" aria-label="Close">×</button></div>
+      <p id="confirmMessage" class="confirm-message"></p>
+      <div class="modal-actions"><button id="confirmNo" type="button" class="secondary-btn">Cancel</button><button id="confirmYes" type="button" class="danger-btn">Yes, continue</button></div>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="assets/js/api.js"></script>
-  <script src="assets/js/app.js"></script>
+  <script src="assets/js/api.js?v=2.1"></script>
+  <script src="assets/js/app.js?v=2.1"></script>
 </body>
 </html>
