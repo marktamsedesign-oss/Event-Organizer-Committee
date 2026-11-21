@@ -48,3 +48,8 @@ All signed-in users can see task summaries, Finance and Food data. The shared pa
 - App passwords are not stored in `localStorage`; session tokens are stored locally until sign-out or expiration. Sessions expire after ~6 hours.
 - Updating GitHub files does **not** automatically update the Apps Script deployment. Both deployment steps are required.
 - Existing data sheets are never silently cleared to resolve a header mismatch. Back up your Google Spreadsheet first, then migrate your old `Users.pinHash` column using the function provided.
+
+
+## v2.3 enhancements
+
+See **RELEASE-v2.3.md** for Receivables, icon-only controls, safe standalone Delete actions, the top-right Add menu, the Refresh/Sync badge and backend write deduplication.

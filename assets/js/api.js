@@ -22,9 +22,9 @@ const Api = (() => {
       document.body.appendChild(script);
     });
   }
-  async function request(action, data={}) {
+  async function request(action, data={}, reuseRequestId=null) {
     if (["bootstrap","getData","getTaskUpdates"].includes(action)) return jsonp({action,...data});
-    const requestId = "req_" + Date.now() + "_" + Math.random().toString(36).slice(2,9);
+    const requestId = reuseRequestId || "req_" + Date.now() + "_" + Math.random().toString(36).slice(2,9);
     const body = new URLSearchParams({action,requestId,payload:JSON.stringify(data)});
     // no-cors POST is intentionally opaque; the operation receipt is retrieved via JSONP.
     await fetch(API_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"},body:body.toString()});
@@ -44,7 +44,7 @@ const Api = (() => {
         return receipt.result || {ok:true};
       }
     }
-    throw new Error("The write may have succeeded, but confirmation timed out. Refresh before retrying to avoid duplicates.");
+    throw new Error("Confirmation timed out. Use the Sync button to retry the SAME request safely, or Refresh to discard pending edits.");
   }
   return {request};
 })();

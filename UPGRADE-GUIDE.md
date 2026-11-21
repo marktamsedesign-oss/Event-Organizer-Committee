@@ -84,3 +84,8 @@ The old helper ran `ensureSchema_()` *before* removing `pinHash`. The schema rej
 | GitHub changes don't appear | ZIP uploaded as an attachment instead of files / Actions not run | Unzip into repository root, commit individual files, inspect Actions and hard-refresh |
 
 **Important:** This package was checked locally for syntax and internal UI/backend compatibility. It was **not** deployed to your private Google Spreadsheet or GitHub account; you must carry out the two deployment steps above.
+
+
+## v2.3 Upgrade note
+
+For the latest changes, see **RELEASE-v2.3.md**. In particular, the new `WriteReceipts` sheet tracks request deduplication and is created by `setupDatabase()`. Receivables are not cash receipts, and historical `Income` rows are preserved unchanged. Update both the GitHub frontend and spreadsheet-bound Apps Script and deploy a NEW web app version.

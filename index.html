@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#172554">
   <meta name="description" content="Pasko ng Angkan 2026 event management">
   <title>Pasko ng Angkan 2026</title>
-  <link rel="stylesheet" href="assets/css/style.css?v=2.2">
+  <link rel="stylesheet" href="assets/css/style.css?v=2.3">
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -17,9 +17,19 @@
       </a>
       <div class="top-actions">
         <span id="saveState" class="save-state" role="status" aria-live="polite">All changes saved</span>
-        <button id="refreshBtn" class="icon-btn" title="Refresh data" aria-label="Refresh">↻</button>
+        <button id="refreshBtn" class="icon-btn" type="button" data-icon="refresh" title="Refresh latest data from Google Sheets" aria-label="Refresh latest data"></button>
+        <button id="syncBtn" class="icon-btn sync-btn" type="button" data-icon="sync" title="Sync unsaved changes to Google Sheets" aria-label="Sync changes">
+          <span id="syncCount" class="sync-count hidden" aria-live="polite">0</span>
+        </button>
+        <div class="add-menu-wrap">
+          <button id="addMenuBtn" class="icon-btn hidden" type="button" data-icon="plus" title="Add user or committee member" aria-label="Open Add menu" aria-expanded="false" aria-controls="addMenu"></button>
+          <div id="addMenu" class="popover add-menu hidden" role="menu">
+            <button id="addUserTopBtn" type="button" class="menu-item hidden" role="menuitem">Add new user</button>
+            <button id="addMemberTopBtn" type="button" class="menu-item hidden" role="menuitem">Assign committee member</button>
+          </div>
+        </div>
         <button id="profileBtn" class="profile-chip" aria-label="Open user profile">
-          <span id="avatar" class="avatar">?</span><span id="profileName">Sign in</span><span>⌄</span>
+          <span id="avatar" class="avatar">?</span><span id="profileName">Sign in</span><span class="profile-chevron">⌄</span>
         </button>
       </div>
     </header>
@@ -52,7 +62,7 @@
       <section id="tab-committees" class="tab-panel active">
         <div class="section-heading">
           <div><p class="eyebrow">PEOPLE & RESPONSIBILITIES</p><h2>Committee directory</h2><p class="muted">Progress automatically updates from completed tasks ÷ total tasks.</p></div>
-          <button id="addCommitteeBtn" class="primary-btn admin-only">＋ Add committee</button>
+          <button id="addCommitteeBtn" type="button" class="primary-btn admin-only" data-icon="plus" title="Add committee" aria-label="Add committee"></button>
         </div>
         <div id="committeeList" class="committee-grid"><div class="loading">Loading committees…</div></div>
       </section>
@@ -60,7 +70,7 @@
       <section id="tab-tasks" class="tab-panel">
         <div class="section-heading">
           <div><p class="eyebrow">WORK TRACKER</p><h2>To-do list</h2><p class="muted">Members of a committee can update its tasks.</p></div>
-          <button id="addTaskBtn" class="primary-btn">＋ Add task</button>
+          <button id="addTaskBtn" type="button" class="primary-btn" data-icon="plus" title="Add task" aria-label="Add task"></button>
         </div>
         <div class="filters">
           <label class="field"><span>Committee</span><select id="taskCommitteeFilter"><option value="">All committees</option></select></label>
@@ -72,30 +82,30 @@
 
       <section id="tab-finance" class="tab-panel">
         <div class="section-heading">
-          <div><p class="eyebrow">FINANCE & PROCUREMENT</p><h2>Finance tracker</h2><p class="muted">Opening cash, income, expenses and the available balance.</p></div>
-          <button id="addFinanceBtn" class="primary-btn hidden">＋ Add entry</button>
+          <div><p class="eyebrow">FINANCE & PROCUREMENT</p><h2>Finance tracker</h2><p class="muted">Opening cash, outstanding receivables, expenses and available cash.</p></div>
+          <button id="addFinanceBtn" type="button" class="primary-btn hidden" data-icon="plus" title="Add finance entry" aria-label="Add finance entry"></button>
         </div>
         <div class="summary-grid finance-grid">
           <article class="summary-card"><span>Cash on hand</span><strong id="financeCash">₱0.00</strong></article>
-          <article class="summary-card"><span>Income</span><strong id="financeIncome">₱0.00</strong></article>
+          <article class="summary-card"><span>Receivables</span><strong id="financeReceivables">₱0.00</strong></article>
           <article class="summary-card"><span>Expenses</span><strong id="financeExpenses">₱0.00</strong></article>
-          <article class="summary-card accent-card"><span>Available balance</span><strong id="financeBalance">₱0.00</strong></article>
+          <article class="summary-card accent-card"><span>Available cash</span><strong id="financeBalance">₱0.00</strong></article>
         </div>
-        <p class="section-note">Cash on Hand entries are added together as opening cash. Record new contributions as Income to avoid double counting.</p>
+        <p class="section-note">Receivables are money expected but not yet collected, so they are not included in available cash. When collected, adjust the receivable and record the received cash as Cash on Hand. Older Income entries remain visible as historical records.</p>
         <div id="financeList" class="stack-list"></div>
       </section>
 
       <section id="tab-food" class="tab-panel">
         <div class="section-heading">
           <div><p class="eyebrow">FOOD & FELLOWSHIP</p><h2>Food and supplies</h2><p class="muted">Keep track of what's needed, who's assigned and what is ready.</p></div>
-          <button id="addFoodBtn" class="primary-btn hidden">＋ Add item</button>
+          <button id="addFoodBtn" type="button" class="primary-btn hidden" data-icon="plus" title="Add food item" aria-label="Add food item"></button>
         </div>
         <div id="foodSummary" class="food-summary"></div>
         <div id="foodList" class="food-groups"></div>
       </section>
 
       <section id="tab-reports" class="tab-panel">
-        <div class="section-heading"><div><p class="eyebrow">DIRECTOR'S VIEW</p><h2>Progress reports</h2><p class="muted">Progress is automatically based on the number of completed tasks.</p></div><button id="exportBtn" class="secondary-btn">↓ Export CSV</button></div>
+        <div class="section-heading"><div><p class="eyebrow">DIRECTOR'S VIEW</p><h2>Progress reports</h2><p class="muted">Progress is automatically based on the number of completed tasks.</p></div><button id="exportBtn" type="button" class="secondary-btn" data-icon="download" title="Export CSV report" aria-label="Export CSV report"></button></div>
         <div id="reportOverview" class="report-overview"></div>
         <div class="report-columns">
           <div class="panel"><h3>Committee progress</h3><div id="reportCommittees"></div></div>
@@ -109,7 +119,6 @@
 
   <div id="profileMenu" class="popover hidden">
     <div class="popover-head"><strong id="menuUserName">Guest</strong><span id="menuUserRole" class="muted">Not signed in</span></div>
-    <button id="addUserMenuBtn" class="menu-item admin-only hidden">＋ Add new user</button>
     <button id="archiveMenuBtn" class="menu-item admin-only hidden">Archived committees / Restore</button>
     <button id="editProfileBtn" class="menu-item">Switch user</button>
     <button id="signOutBtn" class="menu-item">Sign out</button>
@@ -124,7 +133,7 @@
       <div id="loginPreview" class="login-preview" aria-live="polite"></div>
       <label class="field"><span>Group password</span><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Enter group password" required></label>
       <p id="loginError" class="form-error"></p>
-      <button class="primary-btn full-width" type="submit">Continue</button>
+      <button class="primary-btn full-width" type="submit" title="Sign in">Continue</button>
       <small class="muted">New member? Ask the Director or Assistant Director to add your profile. Do not share the group password outside the event team.</small>
     </form>
   </dialog>
@@ -135,7 +144,7 @@
       <div class="modal-title"><div><p class="eyebrow">EVENT MANAGEMENT</p><h2 id="editTitle">Edit</h2></div><button type="button" class="close-btn" data-close="editDialog">×</button></div>
       <div id="editFields" class="form-fields"></div>
       <p id="editError" class="form-error"></p>
-      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="editDialog">Cancel</button><button type="submit" class="primary-btn">Save changes</button></div>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="editDialog" data-icon="close" title="Cancel" aria-label="Cancel"></button><button type="submit" class="primary-btn" data-icon="save" title="Save changes" aria-label="Save changes"></button></div>
     </form>
   </dialog>
 
@@ -145,7 +154,7 @@
       <div class="modal-title"><div><p class="eyebrow">PEOPLE & ROLES</p><h2 id="membersTitle">Manage members</h2></div><button type="button" class="close-btn" data-close="membersDialog" aria-label="Close">×</button></div>
       <p class="muted">Directors can assign Heads or Support. Committee Heads can add or edit Support members in their own committee.</p>
       <div id="membersList" class="member-manager-list"></div>
-      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="membersDialog">Close</button><button type="button" id="addMemberBtn" class="primary-btn">＋ Assign person</button></div>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="membersDialog" data-icon="close" title="Close" aria-label="Close"></button><button type="button" id="addMemberBtn" class="primary-btn" data-icon="user-plus" title="Assign committee member" aria-label="Assign committee member"></button></div>
     </div>
   </dialog>
 
@@ -155,7 +164,7 @@
       <div class="modal-title"><div><p class="eyebrow">RECOVERY</p><h2>Archived committees</h2></div><button type="button" class="close-btn" data-close="archivesDialog" aria-label="Close">×</button></div>
       <p class="muted">Deleted committees are hidden, not erased. Their task and membership history remains in Google Sheets.</p>
       <div id="archivesList" class="member-manager-list"></div>
-      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="archivesDialog">Close</button></div>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="archivesDialog" data-icon="close" title="Close" aria-label="Close"></button></div>
     </div>
   </dialog>
 
@@ -164,12 +173,12 @@
     <div class="modal-card">
       <div class="modal-title"><div><p class="eyebrow">PLEASE CONFIRM</p><h2>Are you sure?</h2></div><button type="button" id="confirmDismiss" class="close-btn" aria-label="Close">×</button></div>
       <p id="confirmMessage" class="confirm-message"></p>
-      <div class="modal-actions"><button id="confirmNo" type="button" class="secondary-btn">Cancel</button><button id="confirmYes" type="button" class="danger-btn">Yes, continue</button></div>
+      <div class="modal-actions"><button id="confirmNo" type="button" class="secondary-btn" data-icon="close" title="Cancel" aria-label="Cancel"></button><button id="confirmYes" type="button" class="danger-btn" data-icon="check" title="Confirm action" aria-label="Confirm action"></button></div>
     </div>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="assets/js/api.js?v=2.2"></script>
-  <script src="assets/js/app.js?v=2.2"></script>
+  <script src="assets/js/api.js?v=2.3"></script>
+  <script src="assets/js/app.js?v=2.3"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.2 browser UI. No frontend password/PIN storage. */
+/* Pasko ng Angkan 2026 — v2.3 browser UI. No frontend password/PIN storage. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -14,6 +14,39 @@ function sessionGet(){try{return localStorage.getItem("pna_session")}catch{retur
 function sessionSet(data){try{localStorage.setItem("pna_session",JSON.stringify(data))}catch{/* session lasts until tab closes */}}
 function sessionClear(){try{localStorage.removeItem("pna_session")}catch{/* already unavailable */}}
 
+
+// Local, self-contained outline icons (no external dependency or CDN).
+const ICON_PATHS={
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  refresh:'<path d="M20 11a8 8 0 0 0-14.9-3M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.9 3M20 20v-5h-5"/>',
+  sync:'<path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+  pencil:'<path d="m15 5 4 4M4 20l4.5-1 11-11a2.1 2.1 0 0 0-3-3l-11 11L4 20Z"/>',
+  trash:'<path d="M3 6h18M8 6V4h8v2m3 0-1 15H6L5 6m5 4v7m4-7v7"/>',
+  users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m16 0v-2a4 4 0 0 0-3-3.87M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8-7.87a4 4 0 0 1 0 7.75"/>',
+  'user-plus':'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm10-3v6m-3-3h6"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>',
+  'check-circle':'<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+  close:'<path d="M18 6 6 18M6 6l12 12"/>',
+  save:'<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
+  history:'<path d="M3 12a9 9 0 1 0 3-6.7M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  download:'<path d="M12 3v12m0 0-5-5m5 5 5-5M4 17v4h16v-4"/>',
+  archive:'<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v12h14V8m-10 4h6"/>',
+  restore:'<path d="M3 11a9 9 0 1 1 3 7M3 3v6h6"/><path d="M12 7v5l4 2"/>',
+  switch:'<path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4"/>',
+  logout:'<path d="M10 17l5-5-5-5m5 5H3M13 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
+  activity:'<path d="M4 12h3l3-8 4 16 3-8h3"/>',
+  flag:'<path d="M4 21V4m0 1c5-3 8 3 16 0v11c-8 3-11-3-16 0"/>'
+};
+function icon(name){return `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICON_PATHS[name]||ICON_PATHS.check}</svg>`;}
+function iconAction(buttonClass,id,label,iconName,extraClass=""){
+  return `<button type="button" class="small-btn icon-action ${esc(buttonClass)} ${esc(extraClass)}" data-id="${esc(id)}" title="${esc(label)}" aria-label="${esc(label)}">${icon(iconName)}</button>`;
+}
+function decorateStaticIcons(){
+  $$('[data-icon]').forEach(el=>{if(el.querySelector('.ui-icon'))return;el.insertAdjacentHTML('afterbegin',icon(el.dataset.icon));});
+  const m={"addUserTopBtn":"user-plus","addMemberTopBtn":"users","archiveMenuBtn":"archive","editProfileBtn":"switch","signOutBtn":"logout"};
+  Object.entries(m).forEach(([id,ico])=>{const el=document.getElementById(id);if(el&&!el.querySelector('.ui-icon'))el.insertAdjacentHTML('afterbegin',icon(ico));});
+}
+
 let toastTimer=null;
 function toast(message){const el=$("#toast");el.textContent=message;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),3500)}
 function setConnection(message,ok=false){const el=$("#connectionState");el.textContent=message;el.style.color=ok?"#16834b":""}
@@ -25,7 +58,7 @@ function canCreateTasks(){return isManager()||state.committees.some(c=>isHeadOf(
 function canEditTask(t){return isManager()||isHeadOf(t.committeeId)}
 function canUpdateTask(t){return isManager()||isMemberOf(t.committeeId)}
 function canEditFinance(){return isManager()||isHeadOf("COM-FIN")}
-function canDeleteFinance(entry){return isManager()||entry?.recordedBy===state.user?.id}
+function canDeleteFinance(entry){return canEditFinance()&&(isManager()||entry?.recordedBy===state.user?.id)}
 function canEditFood(){return isManager()||isHeadOf("COM-FOOD")}
 function active(value){return value===true||value===1||String(value).toLowerCase()==="true"}
 function userName(id){return (state.bootstrap?.users||[]).find(u=>u.id===id)?.name||id||"Unknown"}
@@ -46,28 +79,40 @@ async function api(action,data={}){
     throw err;
   }
 }
-function assertApiV22(response){if(Number(response?.apiVersion)!==22)throw new Error("The Apps Script deployment is outdated. Update Code.gs to v2.2, deploy a NEW version, and verify assets/js/api.js uses that /exec URL.")}
+function assertApiV23(response){if(Number(response?.apiVersion)!==23)throw new Error("The Apps Script deployment is outdated. Update Code.gs to v2.3, deploy a NEW version, and verify assets/js/api.js uses that /exec URL.")}
 function clearSession(){state.user=null;state.token=null;sessionClear();state.tasks=[];state.updates=[];state.finance=[];state.foodItems=[];state.activity=[];state.archivedCommittees=[];updateSaveState()}
 
-// v2.2 saves: optimistically update the screen, then serialize writes in the background.
-// Never automatically retry a timed-out POST: the server might already have committed it.
-let pendingWrites=0, failedWrites=0, writing=false, writes=[], changeVersion=0;
+// v2.3: optimistic UI, serialized background writes, a visible unsynced badge.
+// Failed jobs keep their original requestId. Server-side WriteReceipts makes
+// a manual retry idempotent even if a prior confirmation was lost.
+let pendingWrites=0, writing=false, writes=[],failedJobs=[],changeVersion=0;
 let lastRefreshAt=0;
+function unsyncedCount(){return pendingWrites+failedJobs.length;}
 function updateSaveState(){
-  const el=$("#saveState");if(!el)return;
-  const label=pendingWrites?`Saving ${pendingWrites} change${pendingWrites===1?"":"s"}…`:failedWrites?"Save failed · refresh":"All changes saved";
+  const el=$("#saveState"),btn=$("#syncBtn"),badge=$("#syncCount");
+  if(!el||!btn||!badge)return;
+  const total=unsyncedCount();
+  const label=failedJobs.length?`${failedJobs.length} need sync`:(pendingWrites?`Saving ${pendingWrites}…`:'All changes saved');
   el.textContent=label;
-  el.classList.toggle("saving",pendingWrites>0);
-  el.classList.toggle("save-error",!pendingWrites&&failedWrites>0);
-  el.title=pendingWrites?"Background Google Sheets sync is in progress; keep this page open.":failedWrites?"A save failed. Review records and refresh before retrying.":"Confirmed by Google Apps Script";
+  el.classList.toggle("saving",pendingWrites>0&&!failedJobs.length);
+  el.classList.toggle("save-error",failedJobs.length>0);
+  el.title=failedJobs.length?"Some edits are still local. Press Sync to retry safely, or Refresh to discard unsaved edits.":pendingWrites?"Edits are saving to Google Sheets in the background.":"Confirmed by Google Sheets";
+  badge.textContent=total>99?"99+":String(total);
+  badge.classList.toggle("hidden",!total);
+  btn.classList.toggle("has-unsynced",total>0);
+  btn.classList.toggle("sync-failed",failedJobs.length>0);
+  btn.classList.toggle("syncing",pendingWrites>0);
+  btn.setAttribute("aria-label",total?`Sync ${total} unsaved changes`:"Sync changes to Google Sheets");
+  btn.title=failedJobs.length?`Retry ${failedJobs.length} unconfirmed change(s)`:pendingWrites?`${pendingWrites} saving in background`:"All changes synced; click to check";
 }
 function queueWrite(action,payload,optimistic){
   if(!state.token)return toast("Sign in to make changes.");
   const token=state.token;
+  const requestId="req_"+Date.now()+"_"+Math.random().toString(36).slice(2,10);
   changeVersion++;
   if(optimistic)optimistic();
   pendingWrites++;
-  writes.push({action,payload,token});
+  writes.push({action,payload,token,requestId});
   updateSaveState();renderAll();
   Promise.resolve().then(drainWrites);
   return true;
@@ -79,42 +124,63 @@ async function drainWrites(){
     while(writes.length){
       const job=writes.shift();
       try{
-        const result=await Api.request(job.action,{...job.payload,token:job.token});
-        if(!result?.ok)throw new Error(result?.error||"The server rejected the change.");
+        const result=await Api.request(job.action,{...job.payload,token:job.token},job.requestId);
+        if(!result?.ok)throw new Error(result?.error||"Server rejected the change.");
         if(job.action==="addUser"&&result.user&&state.bootstrap){
-          state.bootstrap.users=[...state.bootstrap.users,result.user];renderLoginUsers();
+          if(!state.bootstrap.users.some(u=>u.id===result.user.id))state.bootstrap.users.push(result.user);
+          renderLoginUsers();
         }
       }catch(error){
-        failedWrites++;
-        toast("Save failed: "+error.message+". Review records before retrying.");
+        failedJobs.push({...job,error:error.message});
+        toast("Not synced: "+error.message+". Press Sync to retry.");
       }finally{
         pendingWrites--;updateSaveState();
       }
     }
   }finally{
     writing=false;
-    // Coalesced refresh: one read after the entire batch, never one per edit.
-    try{await refreshData()}catch(err){failedWrites++;toast("Background refresh failed: "+err.message)}
+    // Do not overwrite optimistic local edits while a failed job awaits retry.
+    if(!failedJobs.length){
+      try{await refreshData()}catch(err){toast("Save confirmed, but refresh failed: "+err.message)}
+    }
     updateSaveState();
     if(writes.length)Promise.resolve().then(drainWrites);
   }
 }
-function allowNavigation(){if(pendingWrites){toast("Please keep this page open: changes are still syncing.");return false}return true}
+function allowNavigation(){if(unsyncedCount()){toast("Unsynced changes remain. Use Sync before leaving.");return false}return true;}
+async function manualSync(){
+  if(pendingWrites||writing){toast("Changes are already syncing in the background.");return;}
+  if(!state.token){toast("Sign in to sync changes.");return;}
+  if(!failedJobs.length){toast("Everything is saved to Google Sheets.");return;}
+  const retry=failedJobs.splice(0);
+  pendingWrites+=retry.length;
+  writes.unshift(...retry);
+  updateSaveState();
+  toast(`Retrying ${retry.length} change${retry.length===1?"":"s"} with original request IDs…`);
+  Promise.resolve().then(drainWrites);
+}
 async function manualRefresh(){
-  if(!allowNavigation())return;
-  try{await loadBootstrap();const updated=await refreshData();if(updated!==false){failedWrites=0;updateSaveState();toast("Data refreshed")}}
+  if(pendingWrites||writing)return toast("Saving now. Refresh once the current sync finishes.");
+  if(failedJobs.length){
+    const approved=await confirmAction(`You have ${failedJobs.length} unconfirmed change(s). Refresh will discard those local edits and load the Google Sheets records. Use Sync first to retry instead. Continue with Refresh?`);
+    if(!approved)return;
+    failedJobs=[];changeVersion++;updateSaveState();
+  }
+  try{await loadBootstrap();const updated=await refreshData();if(updated!==false){updateSaveState();toast("Latest Google Sheets data loaded")}}
   catch(err){toast(err.message)}
 }
 function backgroundRefresh(){
-  if(!state.token||pendingWrites||writing||document.visibilityState!=="visible"||$("#editDialog").open)return;
-  refreshData().catch(err=>setConnection("Sync delayed: "+err.message));
+  if(!state.token||unsyncedCount()||writing||document.visibilityState!=="visible"||$("#editDialog").open)return;
+  refreshData().catch(err=>setConnection("Refresh delayed: "+err.message));
 }
+
 async function init(){
+  decorateStaticIcons();
   bindEvents();
   updateSaveState();
   setInterval(()=>{if(Date.now()-lastRefreshAt>60000)backgroundRefresh()},60000);
   document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&Date.now()-lastRefreshAt>60000)backgroundRefresh()});
-  window.addEventListener("beforeunload",event=>{if(pendingWrites){event.preventDefault();event.returnValue=""}});
+  window.addEventListener("beforeunload",event=>{if(unsyncedCount()){event.preventDefault();event.returnValue=""}});
   try {
     await loadBootstrap();
     const stored=sessionGet();
@@ -128,7 +194,7 @@ async function init(){
 async function loadBootstrap(){
   const result=await Api.request("bootstrap");
   if(!result?.ok)throw new Error(result?.error||"Database setup failed");
-  assertApiV22(result);
+  assertApiV23(result);
   state.bootstrap=result;state.committees=result.committees||[];state.members=result.members||[];
   renderLoginUsers();
 
@@ -142,13 +208,13 @@ function renderLoginUsers(){
 function renderConnectionError(message){$("#committeeList").innerHTML=`<div class="empty-state"><strong>Database connection needs attention</strong>${esc(message)}<p class="muted">Check the Apps Script v2 deployment, the shared /exec URL, and your spreadsheet schema.</p></div>`}
 async function refreshData(){
   if(!state.token){await loadBootstrap();renderAll();return true}
-  if(pendingWrites)return false;
+  if(unsyncedCount())return false;
   const version=changeVersion,token=state.token;
   const result=await api("getData");
   if(!result?.ok)throw new Error(result?.error||"Could not load event records");
-  assertApiV22(result);
+  assertApiV23(result);
   // Prevent an older read from overwriting a newer optimistic edit.
-  if(version!==changeVersion||token!==state.token||pendingWrites)return false;
+  if(version!==changeVersion||token!==state.token||unsyncedCount())return false;
   state.committees=result.committees||[];state.members=result.members||[];
   state.tasks=result.tasks||[];state.activity=result.activity||[];
   state.finance=result.finance||[];state.foodItems=result.foodItems||[];
@@ -165,9 +231,16 @@ async function refreshData(){
 function bindEvents(){
   $$(".tab").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab)));
   $("#refreshBtn").onclick=manualRefresh;
-  $("#profileBtn").onclick=()=>$("#profileMenu").classList.toggle("hidden");
+  $("#syncBtn").onclick=manualSync;
+  $("#addMenuBtn").onclick=()=>{
+    $("#profileMenu").classList.add("hidden");
+    const opened=$("#addMenu").classList.toggle("hidden");
+    $("#addMenuBtn").setAttribute("aria-expanded",String(!opened));
+  };
+  $("#addUserTopBtn").onclick=()=>{$("#addMenu").classList.add("hidden");$("#addMenuBtn").setAttribute("aria-expanded","false");userEditor()};
+  $("#addMemberTopBtn").onclick=()=>{$("#addMenu").classList.add("hidden");$("#addMenuBtn").setAttribute("aria-expanded","false");topMemberEditor()};
+  $("#profileBtn").onclick=()=>{$("#addMenu").classList.add("hidden");$("#profileMenu").classList.toggle("hidden")};
   $("#editProfileBtn").onclick=()=>{if(!allowNavigation())return;$("#profileMenu").classList.add("hidden");openLogin(true)};
-  $("#addUserMenuBtn").onclick=()=>{$("#profileMenu").classList.add("hidden");userEditor()};
   $("#archiveMenuBtn").onclick=()=>{$("#profileMenu").classList.add("hidden");openArchives()};
   $("#signOutBtn").onclick=()=>{if(!allowNavigation())return;clearSession();$("#profileMenu").classList.add("hidden");renderAll();setConnection("Signed out");openLogin()};
   $("#loginUser").onchange=renderLoginPreview;
@@ -183,7 +256,10 @@ function bindEvents(){
   $("#exportBtn").onclick=exportCsv;
   $$("[data-close]").forEach(b=>b.onclick=()=>$("#"+b.dataset.close).close());
   $("#editForm").onsubmit=saveEditor;
-  document.addEventListener("click",ev=>{if(!ev.target.closest("#profileMenu")&&!ev.target.closest("#profileBtn"))$("#profileMenu").classList.add("hidden")});
+  document.addEventListener("click",ev=>{
+    if(!ev.target.closest("#profileMenu")&&!ev.target.closest("#profileBtn"))$("#profileMenu").classList.add("hidden");
+    if(!ev.target.closest("#addMenu")&&!ev.target.closest("#addMenuBtn")){$("#addMenu").classList.add("hidden");$("#addMenuBtn").setAttribute("aria-expanded","false")}
+  });
 }
 function switchTab(tab){
   state.activeTab=tab;
@@ -229,7 +305,10 @@ function renderProfile(){
   $("#addTaskBtn").classList.toggle("hidden",!canCreateTasks());
   $("#addFinanceBtn").classList.toggle("hidden",!canEditFinance());
   $("#addFoodBtn").classList.toggle("hidden",!canEditFood());
-  $("#addUserMenuBtn").classList.toggle("hidden",!isManager());
+  const assignable=state.committees.some(c=>canManageMembers(c.id));
+  $("#addMenuBtn").classList.toggle("hidden",!state.user||(!isManager()&&!assignable));
+  $("#addUserTopBtn").classList.toggle("hidden",!isManager());
+  $("#addMemberTopBtn").classList.toggle("hidden",!assignable);
   $("#archiveMenuBtn").classList.toggle("hidden",!isManager());
 }
 function renderAll(){
@@ -254,7 +333,7 @@ function renderCommittees(){
       ${c.description?`<p class="muted committee-desc">${esc(c.description)}</p>`:""}
       <div class="progress-row"><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><span class="progress-value">${progress}%</span></div><div class="progress-caption">${stats.completed} of ${stats.total} tasks completed · Auto-calculated</div>
       <div class="member-line">${memberships.length?memberships.map(m=>`<span class="member-pill">${esc(m.name)} · ${esc(m.role)}${m.supportRole?" · "+esc(m.supportRole):""}</span>`).join(""):"No members assigned"}</div>
-      <div class="task-actions">${canManageMembers(c.id)?`<button type="button" class="small-btn primary manage-members" data-id="${esc(c.id)}">Manage members</button>`:""}${isManager()?`<button type="button" class="small-btn edit-committee" data-id="${esc(c.id)}">Edit details</button><button type="button" class="small-btn danger-text delete-committee" data-id="${esc(c.id)}">Delete committee</button>`:""}</div></article>`;
+      <div class="task-actions committee-actions"><div class="actions-main">${canManageMembers(c.id)?iconAction("manage-members",c.id,"Manage committee members","users","primary"):""}${isManager()?iconAction("edit-committee",c.id,"Edit committee details","pencil"):""}</div>${isManager()?`<div class="actions-danger">${iconAction("delete-committee",c.id,"Delete committee (archive)","trash","danger-text")}</div>`:""}</div></article>`;
   }).join("");
   host.querySelectorAll(".committee-card").forEach(card=>card.onclick=ev=>{
     if(ev.target.closest("button"))return;
@@ -280,7 +359,7 @@ function renderMembersDialog(){
   $("#membersList").innerHTML=memberships.length?memberships.map(m=>{
     const editable=isManager()||m.role!=="Head";
     return `<div class="manager-member-row"><div><strong>${esc(m.name)}</strong><p class="muted">${esc(m.role)}${m.supportRole?" · "+esc(m.supportRole):""}</p></div>
-    ${editable?`<div class="manager-member-actions"><button class="small-btn member-edit" data-id="${esc(m.id)}" type="button">Edit</button><button class="small-btn danger-text member-remove" data-id="${esc(m.id)}" type="button">Remove</button></div>`:"<span class=\"muted\">Director only</span>"}</div>`;
+    ${editable?`<div class="manager-member-actions">${iconAction("member-edit",m.id,"Replace or edit member","pencil")}<div class="actions-danger">${iconAction("member-remove",m.id,"Remove committee assignment","trash","danger-text")}</div></div>`:"<span class=\"muted\">Director only</span>"}</div>`;
   }).join(""):'<div class="empty-state">No members assigned yet.</div>';
   $("#membersList").querySelectorAll(".member-edit").forEach(b=>b.onclick=()=>memberEditor(c,state.members.find(m=>m.id===b.dataset.id)));
   $("#membersList").querySelectorAll(".member-remove").forEach(b=>b.onclick=async()=>{
@@ -308,7 +387,7 @@ function openArchives(){
   renderArchives();$("#archivesDialog").showModal();
 }
 function renderArchives(){
-  $("#archivesList").innerHTML=state.archivedCommittees.length?state.archivedCommittees.map(c=>`<div class="manager-member-row"><div><strong>${esc(c.name)}</strong><p class="muted">Members and tasks retained for recovery</p></div><button type="button" class="small-btn restore-committee" data-id="${esc(c.id)}">Restore</button></div>`).join(""):'<div class="empty-state">No deleted committees.</div>';
+  $("#archivesList").innerHTML=state.archivedCommittees.length?state.archivedCommittees.map(c=>`<div class="manager-member-row"><div><strong>${esc(c.name)}</strong><p class="muted">Members and tasks retained for recovery</p></div>${iconAction("restore-committee",c.id,"Restore committee","restore")}</div>`).join(""):'<div class="empty-state">No deleted committees.</div>';
   $$(".restore-committee").forEach(b=>b.onclick=()=>{
     const c=state.archivedCommittees.find(x=>x.id===b.dataset.id);if(!c)return;
     queueWrite("restoreCommittee",{id:c.id},()=>{
@@ -317,6 +396,19 @@ function renderArchives(){
     });
     renderArchives();toast("Restoration syncing in background…");
   });
+}
+function topMemberEditor(){
+  const committees=isManager()?state.committees:state.committees.filter(c=>isHeadOf(c.id));
+  if(!committees.length)return toast("You need a committee Head role to assign members.");
+  const users=(state.bootstrap?.users||[]).filter(u=>active(u.active));
+  if(!users.length)return toast("No active users found. Add a user first.");
+  state.managingCommitteeId=null;
+  openEditor("Assign committee member",[
+    {name:"committeeId",label:"Committee",type:"select",required:true,options:committees.map(c=>({value:c.id,label:c.name}))},
+    {name:"userId",label:"Person",type:"select",required:true,options:users.map(u=>({value:u.id,label:u.name}))},
+    {name:"role",label:"Committee role",type:"select",options:(isManager()?["Head","Support"]:["Support"]).map(x=>({value:x,label:x}))},
+    {name:"supportRole",label:"Specific responsibility"}
+  ],"saveMember",{committeeId:committees[0].id,role:"Support"});
 }
 function userEditor(){
   if(!isManager())return toast("Only Directors can add users.");
@@ -347,7 +439,7 @@ function renderTasks(){
       <div class="progress-row"><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><span class="progress-value">${progress}%</span></div>
       <div class="task-meta task-details"><span>Due: ${esc(t.dueDate||"Not set")}</span><span>·</span><span>Priority: ${esc(t.priority||"Normal")}</span></div>
       ${t.latestUpdate?`<div class="task-note">Latest update: ${esc(t.latestUpdate)}</div>`:""}
-      <div class="task-actions">${canUpdateTask(t)?`<button class="small-btn primary update-task" data-id="${esc(t.id)}">Update progress</button><button class="small-btn history-task" data-id="${esc(t.id)}">History</button>${t.status!=="Completed"?`<button class="small-btn quick-complete" data-id="${esc(t.id)}">✓ Mark complete</button>`:""}`:""}${canEditTask(t)?`<button class="small-btn edit-task" data-id="${esc(t.id)}">Edit task</button>`:""}</div></article>`;
+      <div class="task-actions">${canUpdateTask(t)?`${iconAction("update-task",t.id,"Update task progress","activity","primary")}${iconAction("history-task",t.id,"View update history","history")}${t.status!=="Completed"?iconAction("quick-complete",t.id,"Mark task completed","check-circle"):""}`:""}${canEditTask(t)?iconAction("edit-task",t.id,"Edit task details","pencil"):""}</div></article>`;
   }).join(""):'<div class="empty-state"><strong>No matching tasks</strong>Try another filter or add a task.</div>';
   $$(".update-task").forEach(b=>b.onclick=()=>updateTaskEditor(state.tasks.find(t=>t.id===b.dataset.id)));
   $$(".history-task").forEach(b=>b.onclick=()=>showHistory(b.dataset.id));
@@ -356,11 +448,11 @@ function renderTasks(){
 }
 function renderFinance(){
   const sum=type=>state.finance.filter(entry=>entry.type===type).reduce((n,entry)=>n+(Number(entry.amount)||0),0);
-  const cash=sum("Cash on Hand"),income=sum("Income"),expenses=sum("Expense");
-  $("#financeCash").textContent=money(cash);$("#financeIncome").textContent=money(income);
-  $("#financeExpenses").textContent=money(expenses);$("#financeBalance").textContent=money(cash+income-expenses);
+  const cash=sum("Cash on Hand"),receivables=sum("Receivables"),expenses=sum("Expense");
+  $("#financeCash").textContent=money(cash);$("#financeReceivables").textContent=money(receivables);
+  $("#financeExpenses").textContent=money(expenses);$("#financeBalance").textContent=money(cash-expenses);
   const sorted=[...state.finance].sort((a,b)=>String(b.date||b.createdAt).localeCompare(String(a.date||a.createdAt)));
-  $("#financeList").innerHTML=sorted.length?sorted.map(item=>`<article class="list-card"><div class="list-card-content"><div class="list-card-head"><strong>${esc(item.description)}</strong>${badge(item.type)}</div><p class="muted">${esc(item.date||"")} · ${esc(item.recordedByName||"")}</p></div><strong class="amount ${item.type==="Expense"?"amount-negative":""}">${item.type==="Expense"?"−":""}${money(item.amount)}</strong><div class="list-actions">${canEditFinance()?`<button type="button" class="small-btn finance-edit" data-id="${esc(item.id)}">Edit</button>`:""}${canDeleteFinance(item)?`<button type="button" class="small-btn danger-text finance-delete" data-id="${esc(item.id)}">Delete</button>`:""}</div></article>`).join(""):'<div class="empty-state"><strong>No finance entries yet</strong>Finance Heads or Directors can add the first record.</div>';
+  $("#financeList").innerHTML=sorted.length?sorted.map(item=>`<article class="list-card"><div class="list-card-content"><div class="list-card-head"><strong>${esc(item.description)}</strong>${badge(item.type==="Income"?"Income (legacy)":item.type)}</div><p class="muted">${esc(item.date||"")} · ${esc(item.recordedByName||"")}</p></div><strong class="amount ${item.type==="Expense"?"amount-negative":""}">${item.type==="Expense"?"−":""}${money(item.amount)}</strong><div class="list-actions"><div class="actions-main">${canEditFinance()?iconAction("finance-edit",item.id,"Edit finance entry","pencil"):""}</div>${canDeleteFinance(item)?`<div class="actions-danger">${iconAction("finance-delete",item.id,"Delete finance entry","trash","danger-text")}</div>`:""}</div></article>`).join(""):'<div class="empty-state"><strong>No finance entries yet</strong>Finance Heads or Directors can add the first record.</div>';
   $$(".finance-edit").forEach(b=>b.onclick=()=>financeEditor(state.finance.find(x=>x.id===b.dataset.id)));
   $$(".finance-delete").forEach(b=>b.onclick=async()=>{
     const entry=state.finance.find(x=>x.id===b.dataset.id);if(!entry)return;
@@ -369,12 +461,13 @@ function renderFinance(){
     toast("Finance entry deleted. Saving in background…");
   });
 }
+
 function renderFood(){
   const done=state.foodItems.filter(item=>item.status==="Done").length,total=state.foodItems.length;
   $("#foodSummary").innerHTML=`<div class="summary-card"><span>Food list progress</span><strong>${done}/${total} completed</strong></div>`;
   $("#foodList").innerHTML=["Food","Drink","Other"].map(category=>{
     const items=state.foodItems.filter(item=>item.category===category);
-    return `<section class="panel food-group"><div class="food-group-heading"><h3>${esc(category)}</h3><span class="badge">${items.length} item${items.length===1?"":"s"}</span></div>${items.length?items.map(item=>`<article class="food-row"><div class="food-text"><div class="food-name">${esc(item.item)} ${badge(item.status)}</div><p class="muted">${item.quantity?`Qty: ${esc(item.quantity)} · `:""}Assigned: ${esc(item.assignedToName||"Unassigned")}</p>${item.remarks?`<div class="task-note">${esc(item.remarks)}</div>`:""}</div><div class="food-actions">${canEditFood()?`<button type="button" class="small-btn primary food-toggle" data-id="${esc(item.id)}">${item.status==="Done"?"Mark Todo":"Mark Done"}</button><button type="button" class="small-btn food-edit" data-id="${esc(item.id)}">Edit</button><button type="button" class="small-btn danger-text food-delete" data-id="${esc(item.id)}">Delete</button>`:""}</div></article>`).join(""):'<p class="muted">No items in this category.</p>'}</section>`;
+    return `<section class="panel food-group"><div class="food-group-heading"><h3>${esc(category)}</h3><span class="badge">${items.length} item${items.length===1?"":"s"}</span></div>${items.length?items.map(item=>`<article class="food-row"><div class="food-text"><div class="food-name">${esc(item.item)} ${badge(item.status)}</div><p class="muted">${item.quantity?`Qty: ${esc(item.quantity)} · `:""}Assigned: ${esc(item.assignedToName||"Unassigned")}</p>${item.remarks?`<div class="task-note">${esc(item.remarks)}</div>`:""}</div><div class="food-actions"><div class="actions-main">${canEditFood()?`${iconAction("food-toggle",item.id,item.status==="Done"?"Mark not done":"Mark done",item.status==="Done"?"refresh":"check-circle","primary")}${iconAction("food-edit",item.id,"Edit food item","pencil")}`:""}</div>${canEditFood()?`<div class="actions-danger">${iconAction("food-delete",item.id,"Delete food item","trash","danger-text")}</div>`:""}</div></article>`).join(""):'<p class="muted">No items in this category.</p>'}</section>`;
   }).join("");
   $$(".food-edit").forEach(b=>b.onclick=()=>foodEditor(state.foodItems.find(x=>x.id===b.dataset.id)));
   $$(".food-toggle").forEach(b=>b.onclick=async()=>{
@@ -390,6 +483,7 @@ function renderFood(){
     toast("Food item deleted. Saving in background…");
   });
 }
+
 function renderReports(){
   const tasks=activeTasks();
   const total=tasks.length,done=tasks.filter(t=>t.status==="Completed").length;
@@ -471,11 +565,11 @@ function updateTaskEditor(task){
 function financeEditor(entry=null){
   if(!canEditFinance())return toast("Only the Finance Heads or Directors may edit finance records.");
   openEditor(entry?"Edit finance entry":"Add finance entry",[
-    {name:"type",label:"Entry type",type:"select",options:["Cash on Hand","Income","Expense"].map(x=>({value:x,label:x}))},
+    {name:"type",label:"Entry type",type:"select",options:["Cash on Hand","Receivables","Expense",...(entry?.type==="Income"?["Income"]:[])].map(x=>({value:x,label:x==="Income"?"Income (legacy; edit existing only)":x}))},
     {name:"amount",label:"Amount (PHP)",type:"number",min:0.01,step:0.01,required:true},
     {name:"description",label:"Description",required:true},
     {name:"date",label:"Date",type:"date",required:true}
-  ],"saveFinance",entry||{type:"Income",date:TODAY()});
+  ],"saveFinance",entry||{type:"Receivables",date:TODAY()});
 }
 function foodEditor(item=null){
   if(!canEditFood())return toast("Only the Food Heads or Directors may edit this list.");
