@@ -164,3 +164,29 @@ html,body{touch-action:pan-x pan-y}
 .share-mode-tab.active{background:#fff;color:var(--blue);box-shadow:0 1px 5px #17255417}
 .share-mode-tab:focus-visible{outline:2px solid #7295ed;outline-offset:2px}
 @media(max-width:700px){.share-mode-tab{min-height:43px}}
+
+
+/* v2.6 — alphabetically sortable, per-person Head/Support role directory. */
+.people-toolbar{display:grid;grid-template-columns:minmax(160px,.8fr) minmax(0,1.4fr);gap:11px;margin:15px 0 10px}
+.people-stats{padding:4px 0 10px}
+.people-roles-list{display:grid;gap:11px;max-height:min(54vh,540px);overflow-y:auto;overscroll-behavior:contain;padding:2px 3px 3px 0}
+.people-person-card{border:1px solid var(--line);background:#fff;border-radius:13px;padding:13px}
+.people-person-heading{display:flex;align-items:flex-start;gap:11px;margin-bottom:11px}
+.people-person-number{width:27px;height:27px;flex:none;border-radius:9px;display:grid;place-items:center;background:#eaf2ff;color:#234e96;font-size:11px;font-weight:750}
+.people-person-heading h3{margin:0 0 3px;font-size:14px}
+.people-role-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.people-role-group{background:#f7f9fd;border:1px solid #e5eaf3;border-radius:10px;padding:10px 11px;min-width:0}
+.people-role-group h4{font-size:11px;margin:0 0 7px;color:#234e96}
+.people-role-group h4 span{color:#67758d}
+.people-role-group ul{margin:0;padding-left:15px}
+.people-role-group li{font-size:12px;line-height:1.5;margin:0 0 7px;overflow-wrap:anywhere}
+.people-role-group li:last-child{margin-bottom:0}
+.people-role-group small{display:block;font-size:10px;color:#5c6a81}
+.people-copy-note{margin-top:12px;line-height:1.5}
+#peopleRolesDialog .modal-card{max-height:min(89vh,890px)}
+@media(max-width:540px){
+  .people-toolbar{grid-template-columns:1fr}
+  .people-role-columns{grid-template-columns:1fr;gap:7px}
+  .people-roles-list{max-height:min(48vh,470px)}
+  .people-person-card{padding:11px}
+}

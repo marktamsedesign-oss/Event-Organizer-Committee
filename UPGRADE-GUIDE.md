@@ -22,3 +22,8 @@ If the `Users` sheet still has a `pinHash` column, run `migrateRemovePinColumn` 
 - Task completion attribution depends on existing audit records; entries completed manually without an audit event cannot be attributed reliably.
 - The upper-left Detailed report includes committee purpose, Head(s), Support/sub-team role and task breakdowns; Simplified provides a shorter group-chat version. If your organization uses formally nested subcommittees, those require an additional data model not present in this release.
 - Pending changes must be confirmed in the online app before closing the tab. The shared-password model is not suitable for sensitive information.
+
+
+## v2.6 — People & roles directory (frontend only)
+
+From v2.5: replace `index.html`, `assets/js/app.js`, and `assets/css/style.css` in GitHub. Publish GitHub Pages, then open the upper-left hamburger menu → **People & roles summary**. It lists active users and their Head/Support committee assignments, with support responsibilities, **Sort by name** A–Z / Z–A, search, and Copy summary. No Code.gs change or Google Sheets migration is needed if v2.4/v2.5 are already working.

@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.5 browser UI; compatible with v2.4 Apps Script API. */
+/* Pasko ng Angkan 2026 — v2.6 browser UI; compatible with v2.4 Apps Script API. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -100,7 +100,7 @@ function iconAction(buttonClass,id,label,iconName,extraClass=""){
 }
 function decorateStaticIcons(){
   $$('[data-icon]').forEach(el=>{if(el.querySelector('.ui-icon'))return;el.insertAdjacentHTML('afterbegin',icon(el.dataset.icon));});
-  const m={"myAssignmentsBtn":"list-todo","copyAllCommitteesBtn":"copy","addUserTopBtn":"user-plus","addMemberTopBtn":"users","archiveMenuBtn":"archive","editProfileBtn":"switch","signOutBtn":"logout"};
+  const m={"myAssignmentsBtn":"list-todo","peopleRolesBtn":"users","copyAllCommitteesBtn":"copy","addUserTopBtn":"user-plus","addMemberTopBtn":"users","archiveMenuBtn":"archive","editProfileBtn":"switch","signOutBtn":"logout"};
   Object.entries(m).forEach(([id,ico])=>{const el=document.getElementById(id);if(el&&!el.querySelector('.ui-icon'))el.insertAdjacentHTML('afterbegin',icon(ico));});
 }
 
@@ -361,6 +361,13 @@ function bindEvents(){
     $("#mainMenu").classList.add("hidden");$("#mainMenuBtn").setAttribute("aria-expanded","false");
     openMyAssignments();
   };
+  $("#peopleRolesBtn").onclick=()=>{
+    $("#mainMenu").classList.add("hidden");$("#mainMenuBtn").setAttribute("aria-expanded","false");
+    openPeopleRoles();
+  };
+  $("#peopleRolesSort").onchange=renderPeopleRoles;
+  $("#peopleRolesSearch").oninput=renderPeopleRoles;
+  $("#copyPeopleRolesBtn").onclick=copyPeopleRoles;
   $("#copyAllCommitteesBtn").onclick=()=>{
     $("#mainMenu").classList.add("hidden");$("#mainMenuBtn").setAttribute("aria-expanded","false");
     openShareDialog();
@@ -455,8 +462,92 @@ function renderAll(){
   renderProfile();populateFilters();renderSummary();renderCommittees();renderTasks();renderFinance();renderFood();renderReports();
   switchTab(state.activeTab);if($("#archivesDialog").open)renderArchives();
   if($("#myAssignmentsDialog").open)renderMyAssignments();
+  if($("#peopleRolesDialog").open)renderPeopleRoles();
   if($("#shareDialog").open)renderSharePreview();
 }
+// Event-wide directory: one person per card, Head and Support assignments grouped
+// separately. Reuses current bootstrap/users + membership records; no extra reads.
+function peopleRolesData(){
+  const committeeIds=new Set(state.committees.map(c=>c.id));
+  const sorted=(state.bootstrap?.users||[]).filter(u=>active(u.active)).map(u=>{
+    const memberships=state.members.filter(m=>active(m.active)&&m.userId===u.id&&committeeIds.has(m.committeeId));
+    const grouped={Head:[],Support:[]};
+    // Legacy data can contain duplicate rows; show each unique role once.
+    const seen=new Set();
+    memberships.forEach(m=>{
+      const role=m.role==="Head"?"Head":"Support";
+      const responsibility=String(m.supportRole||"").trim();
+      const key=[m.committeeId,role,responsibility].join("|");
+      if(seen.has(key))return;
+      seen.add(key);
+      grouped[role].push({committeeId:m.committeeId,committee:committeeName(m.committeeId),responsibility});
+    });
+    const collator=new Intl.Collator("en-PH",{numeric:true,sensitivity:"base"});
+    Object.values(grouped).forEach(assignments=>assignments.sort((a,b)=>collator.compare(a.committee,b.committee)||collator.compare(a.responsibility,b.responsibility)));
+    return {id:u.id,name:u.name||"Unnamed person",position:u.position||"",accessRole:u.accessRole||"Committee Member",heads:grouped.Head,support:grouped.Support};
+  });
+  const query=($("#peopleRolesSearch")?.value||"").trim().toLocaleLowerCase();
+  const filtered=sorted.filter(person=>{
+    if(!query)return true;
+    return [person.name,person.position,person.accessRole,...person.heads.flatMap(a=>[a.committee,a.responsibility]),...person.support.flatMap(a=>[a.committee,a.responsibility])]
+      .some(value=>String(value).toLocaleLowerCase().includes(query));
+  });
+  const collator=new Intl.Collator("en-PH",{numeric:true,sensitivity:"base"});
+  const reverse=$("#peopleRolesSort")?.value==="name-desc";
+  filtered.sort((a,b)=>((reverse?-1:1)*collator.compare(a.name,b.name))||collator.compare(a.id,b.id));
+  return {people:filtered,total:sorted.length};
+}
+function openPeopleRoles(){
+  if(!state.user){toast("Sign in to view people and roles.");openLogin();return;}
+  $("#peopleRolesSort").value="name-asc";
+  $("#peopleRolesSearch").value="";
+  renderPeopleRoles();
+  if(!$("#peopleRolesDialog").open)$("#peopleRolesDialog").showModal();
+}
+function renderPeopleRoles(){
+  const host=$("#peopleRolesList");
+  if(!state.user){host.innerHTML='<div class="empty-state">Sign in to view people and roles.</div>';return;}
+  const {people,total}=peopleRolesData();
+  const heads=people.filter(p=>p.heads.length).length;
+  const supporters=people.filter(p=>p.support.length).length;
+  $("#peopleRolesStats").textContent=`${people.length} of ${total} people · ${heads} serving as Head · ${supporters} serving as Support`;
+  host.innerHTML=people.length?people.map((p,index)=>{
+    const renderGroup=(label,arr)=>`<div class="people-role-group"><h4>${label} <span>(${arr.length})</span></h4>${arr.length?`<ul>${arr.map(a=>`<li><span class="people-committee-name">${esc(a.committee)}</span>${a.responsibility?`<small>${esc(a.responsibility)}</small>`:""}</li>`).join("")}</ul>`:'<p class="muted">No assignments</p>'}</div>`;
+    return `<article class="people-person-card"><div class="people-person-heading"><span class="people-person-number">${index+1}</span><div><h3>${esc(p.name)}</h3><p class="muted">${esc(p.position||"No position listed")} · ${esc(p.accessRole)}</p></div></div><div class="people-role-columns">${renderGroup("Head",p.heads)}${renderGroup("Support",p.support)}</div></article>`;
+  }).join(""):'<div class="empty-state"><strong>No matching people</strong>Try a different name, role, or committee.</div>';
+  $("#copyPeopleRolesBtn").disabled=!people.length;
+}
+function buildPeopleRolesText(){
+  const {people,total}=peopleRolesData();
+  const lines=["🎄 *PASKO NG ANGKAN 2026*","👥 *PEOPLE & ROLES DIRECTORY*",`👤 ${people.length} of ${total} active people · Sorted by name ${$("#peopleRolesSort").value==="name-desc"?"Z–A":"A–Z"}`];
+  if(unsyncedCount())lines.push(`⚠️ ${unsyncedCount()} change(s) not yet confirmed by Google Sheets.`);
+  people.forEach((p,i)=>{
+    lines.push("",`${i+1}. *${p.name}*`, `Position: ${p.position||"Not listed"}`,`System role: ${p.accessRole}`);
+    lines.push(`👤 Head (${p.heads.length}): ${p.heads.length?p.heads.map(a=>a.committee+(a.responsibility?` — ${a.responsibility}`:"")).join("; "):"None"}`);
+    lines.push(`🤝 Support (${p.support.length}): ${p.support.length?p.support.map(a=>a.committee+(a.responsibility?` — ${a.responsibility}`:"")).join("; "):"None"}`);
+  });
+  return lines.join("\n");
+}
+async function copyPeopleRoles(){
+  const body=buildPeopleRolesText();
+  const {people}=peopleRolesData();
+  if(!people.length)return toast("No people to copy.");
+  try{
+    if(!navigator.clipboard?.writeText)throw new Error("Clipboard permission unavailable");
+    await navigator.clipboard.writeText(body);
+    toast(`Copied ${people.length} people in name order. Paste into your group chat.`);
+  }catch{
+    // Only show raw data when a browser blocks the clipboard; avoid silently claiming success.
+    const copyField=document.createElement("textarea");
+    copyField.value=body;copyField.setAttribute("readonly","");
+    copyField.style.position="fixed";copyField.style.left="-9999px";
+    document.body.append(copyField);copyField.select();
+    let copied=false;try{copied=document.execCommand("copy")}catch{}
+    copyField.remove();
+    toast(copied?"People summary copied to clipboard.":"Browser blocked copying. Please enable clipboard permission and try again.");
+  }
+}
+
 // Personal view for the signed-in person only. This reads the same confirmed/
 // optimistic records already loaded for the rest of the app: no extra API call.
 function openMyAssignments(){

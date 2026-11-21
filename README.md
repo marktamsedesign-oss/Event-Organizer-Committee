@@ -1,8 +1,8 @@
-# Pasko ng Angkan 2026 — v2.5
+# Pasko ng Angkan 2026 — v2.6
 
 Mobile-friendly GitHub Pages frontend plus Google Apps Script/Google Sheets backend for managing Christmas event committees, people, tasks, receivables, expenses, and food supplies.
 
-**Start with [RELEASE-v2.5.md](RELEASE-v2.5.md)** for the feature list, safe upgrade sequence, and acceptance checks. Historical releases [v2.4](RELEASE-v2.4.md), [v2.3](RELEASE-v2.3.md) and [v2.2](RELEASE-v2.2.md) remain for reference only.
+**Start with [RELEASE-v2.6.md](RELEASE-v2.6.md)** for the feature list, safe upgrade sequence, and acceptance checks. Historical releases [v2.5](RELEASE-v2.5.md), [v2.4](RELEASE-v2.4.md), [v2.3](RELEASE-v2.3.md) and [v2.2](RELEASE-v2.2.md) remain for reference only.
 
 ## Features
 
@@ -12,7 +12,7 @@ Mobile-friendly GitHub Pages frontend plus Google Apps Script/Google Sheets back
 - Each committee card has a **Go to tasks** icon that filters the To-do list to just that committee.
 - Committee progress is **completed task count / total task count**, not a separately editable per-task percentage.
 - Finance tracker separates Cash on Hand, Receivables, and Expenses. Historical Income records are preserved. Food tracker includes assigned supplies and Todo/Done status.
-- Upper-left menu offers **My tasks / committees** for the signed-in member, plus **Simplified** and **Detailed** group-chat copying modes for all committees.
+- Upper-left menu offers **My tasks / committees**, a **People & roles summary** sorted by Name A–Z or Z–A (with copyable role lists), plus **Simplified** and **Detailed** group-chat copying modes for all committees.
 - Upper-right **Sync & Refresh** combines background write retry and new-data reads, with a numbered badge for unsynced edits.
 - Last-confirmed in-tab state stays visible while a page load or refresh requests the latest Google Sheets data.
 - Icon-only controls have descriptive hover text and accessibility labels. On mobile, Save/Cancel floats above the keyboard when supported.
@@ -30,6 +30,6 @@ Mobile-friendly GitHub Pages frontend plus Google Apps Script/Google Sheets back
 
 ## Deployment
 
-Back up your spreadsheet and repository. **If you already deployed the working v2.4 backend**, no Apps Script change or spreadsheet migration is required: replace the GitHub frontend files and publish. If you are upgrading from an older version, follow the backend upgrade directions in [RELEASE-v2.4.md](RELEASE-v2.4.md) first. Confirm the `/exec` URL in `assets/js/api.js`. See [RELEASE-v2.5.md](RELEASE-v2.5.md) for instructions.
+Back up your spreadsheet and repository. **If you already deployed the working v2.4 backend**, no Apps Script change or spreadsheet migration is required: replace the GitHub frontend files and publish. If you are upgrading from an older version, follow the backend upgrade directions in [RELEASE-v2.4.md](RELEASE-v2.4.md) first. Confirm the `/exec` URL in `assets/js/api.js`. See [RELEASE-v2.6.md](RELEASE-v2.6.md) for instructions.
 
 **Data and security:** The shared group password is a convenience mechanism, not strong user authentication. Do not store sensitive personal or account data. Keep the live Google Sheet private; do not upload backups or exported records to the public GitHub repository.
