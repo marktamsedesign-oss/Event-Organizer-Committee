@@ -97,3 +97,70 @@ html,body{touch-action:pan-x pan-y}
 .task-completion-history li span{margin-left:9px;color:var(--muted,#52627a)}
 .committee-actions .go-to-tasks{background:#eaf2ff;color:#1b4f9a;border-color:#c5d9fb}
 .committee-actions .go-to-tasks:hover{background:#dbeafe}
+
+
+/* v2.5 — compact floating Save/Cancel actions above the mobile keyboard.
+   The bar is fixed to the visual viewport, and set from visualViewport metrics. */
+.editor-float-actions{gap:8px}
+.editor-float-actions button{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;min-width:42px;min-height:42px;padding:8px;border-radius:12px}
+.editor-float-actions .ui-icon{width:19px;height:19px}
+@media(max-width:700px){
+  #editDialog .modal-card{padding-bottom:78px}
+  #editDialog .editor-float-actions{
+    position:fixed;
+    right:max(12px,env(safe-area-inset-right));
+    bottom:calc(12px + env(safe-area-inset-bottom) + var(--editor-keyboard-inset,0px));
+    display:flex;
+    width:max-content;
+    padding:7px;
+    margin:0;
+    z-index:60;
+    border-radius:16px;
+    background:rgba(255,255,255,.97);
+    border:1px solid #d6dfed;
+    box-shadow:0 6px 28px rgba(15,30,57,.22);
+    -webkit-backdrop-filter:blur(14px);
+    backdrop-filter:blur(14px);
+  }
+  #editDialog.editing-keyboard{
+    top:calc(var(--editor-visual-top,0px) + 6px);
+    bottom:auto;
+    margin:0 auto;
+    max-height:calc(var(--editor-visible-height,100vh) - 14px);
+  }
+  #editDialog.editing-keyboard .modal-card{
+    max-height:calc(var(--editor-visible-height,100vh) - 17px);
+    overflow-y:auto;
+    overscroll-behavior:contain;
+  }
+}
+
+/* v2.5 — personal assignments from the upper-left navigation menu. */
+.main-menu{width:min(290px,calc(100vw - 24px))}
+.my-assignments-content{display:grid;gap:20px}
+.my-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.my-stats>div{background:#f5f7fb;padding:12px;border:1px solid #e5eaf3;border-radius:11px;text-align:center}
+.my-stats strong{display:block;font-size:22px;color:var(--blue)}
+.my-stats span{font-size:10px;color:var(--muted)}
+.my-assignments-section>h3{margin:0 0 10px;font-size:15px}
+.my-committee-list,.my-task-list{display:grid;gap:10px}
+.my-committee-card,.my-task-row{border:1px solid var(--line);border-radius:12px;padding:13px;background:#fff}
+.my-row-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.my-committee-card h3{margin:0 0 4px;font-size:14px}
+.my-assignment-roles{margin-top:9px;display:flex;flex-wrap:wrap;gap:5px}
+.my-role-label{background:#eef3ff;color:#253e73;border-radius:7px;padding:5px 8px;font-size:11px}
+.my-committee-card .progress-row{margin:10px 0 7px}
+.my-task-row strong{font-size:13px}
+.my-task-row .muted{margin-top:5px;line-height:1.5}
+.my-task-footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:10px}
+.my-task-footer small{font-size:11px;color:var(--muted)}
+#myAssignmentsDialog .modal-card{max-height:min(87vh,850px)}
+@media(max-width:700px){.my-stats>div{padding:10px 5px}.my-stats strong{font-size:20px}.my-stats span{font-size:9px}}
+
+
+/* v2.5 — share preview format tabs, optimized for touch and group-chat copy. */
+.share-mode-tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:12px 0;padding:5px;border:1px solid #dfe6f2;border-radius:12px;background:#f3f6fb}
+.share-mode-tab{padding:11px 12px;border:0;border-radius:9px;background:transparent;color:#566176;font:inherit;font-size:12px;font-weight:750;cursor:pointer}
+.share-mode-tab.active{background:#fff;color:var(--blue);box-shadow:0 1px 5px #17255417}
+.share-mode-tab:focus-visible{outline:2px solid #7295ed;outline-offset:2px}
+@media(max-width:700px){.share-mode-tab{min-height:43px}}

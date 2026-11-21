@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.4 browser UI; compatible with v2.3 Apps Script API. */
+/* Pasko ng Angkan 2026 — v2.5 browser UI; compatible with v2.4 Apps Script API. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -100,7 +100,7 @@ function iconAction(buttonClass,id,label,iconName,extraClass=""){
 }
 function decorateStaticIcons(){
   $$('[data-icon]').forEach(el=>{if(el.querySelector('.ui-icon'))return;el.insertAdjacentHTML('afterbegin',icon(el.dataset.icon));});
-  const m={"copyAllCommitteesBtn":"copy","addUserTopBtn":"user-plus","addMemberTopBtn":"users","archiveMenuBtn":"archive","editProfileBtn":"switch","signOutBtn":"logout"};
+  const m={"myAssignmentsBtn":"list-todo","copyAllCommitteesBtn":"copy","addUserTopBtn":"user-plus","addMemberTopBtn":"users","archiveMenuBtn":"archive","editProfileBtn":"switch","signOutBtn":"logout"};
   Object.entries(m).forEach(([id,ico])=>{const el=document.getElementById(id);if(el&&!el.querySelector('.ui-icon'))el.insertAdjacentHTML('afterbegin',icon(ico));});
 }
 
@@ -357,11 +357,18 @@ function bindEvents(){
     const hidden=$("#mainMenu").classList.toggle("hidden");
     $("#mainMenuBtn").setAttribute("aria-expanded",String(!hidden));
   };
+  $("#myAssignmentsBtn").onclick=()=>{
+    $("#mainMenu").classList.add("hidden");$("#mainMenuBtn").setAttribute("aria-expanded","false");
+    openMyAssignments();
+  };
   $("#copyAllCommitteesBtn").onclick=()=>{
     $("#mainMenu").classList.add("hidden");$("#mainMenuBtn").setAttribute("aria-expanded","false");
     openShareDialog();
   };
   $("#copyShareBtn").onclick=copyShareReport;
+  $$("#shareModeTabs [data-share-mode]").forEach(button=>{
+    button.onclick=()=>setShareMode(button.dataset.shareMode);
+  });
   $("#addMenuBtn").onclick=()=>{
     $("#mainMenu").classList.add("hidden");
     $("#profileMenu").classList.add("hidden");
@@ -387,6 +394,7 @@ function bindEvents(){
   $("#exportBtn").onclick=exportCsv;
   $$("[data-close]").forEach(b=>b.onclick=()=>$("#"+b.dataset.close).close());
   $("#editForm").onsubmit=saveEditor;
+  setupEditorKeyboardBar();
   document.addEventListener("click",ev=>{
     if(!ev.target.closest("#mainMenu")&&!ev.target.closest("#mainMenuBtn")){$("#mainMenu").classList.add("hidden");$("#mainMenuBtn").setAttribute("aria-expanded","false")}
     if(!ev.target.closest("#profileMenu")&&!ev.target.closest("#profileBtn"))$("#profileMenu").classList.add("hidden");
@@ -446,7 +454,53 @@ function renderProfile(){
 function renderAll(){
   renderProfile();populateFilters();renderSummary();renderCommittees();renderTasks();renderFinance();renderFood();renderReports();
   switchTab(state.activeTab);if($("#archivesDialog").open)renderArchives();
+  if($("#myAssignmentsDialog").open)renderMyAssignments();
+  if($("#shareDialog").open)renderSharePreview();
 }
+// Personal view for the signed-in person only. This reads the same confirmed/
+// optimistic records already loaded for the rest of the app: no extra API call.
+function openMyAssignments(){
+  if(!state.user){toast("Sign in to view your assigned committees and tasks.");openLogin();return;}
+  renderMyAssignments();
+  if(!$("#myAssignmentsDialog").open)$("#myAssignmentsDialog").showModal();
+}
+function personalTaskOrder(a,b){
+  const rank={Blocked:0,Pending:1,"In Progress":2,Completed:3};
+  return (rank[a.status]??2)-(rank[b.status]??2)||String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31"))||String(a.title).localeCompare(String(b.title));
+}
+function renderMyAssignments(){
+  const panel=$("#myAssignmentsContent");
+  if(!state.user){panel.innerHTML='<div class="empty-state">Sign in to view your assignments.</div>';return;}
+  const memberships=state.members.filter(m=>m.userId===state.user.id&&active(m.active)&&state.committees.some(c=>c.id===m.committeeId));
+  const uniqueIds=[...new Set(memberships.map(m=>m.committeeId))];
+  const personalTasks=activeTasks().filter(t=>Array.isArray(t.assigneeIds)&&t.assigneeIds.includes(state.user.id)).sort(personalTaskOrder);
+  const completed=personalTasks.filter(t=>t.status==="Completed").length;
+  const pending=personalTasks.length-completed;
+  $("#myAssignmentsSubtitle").textContent=`${state.user.name} · ${state.user.position||state.user.accessRole} · ${pending} active task${pending===1?"":"s"}`;
+  const summary=`<div class="my-stats"><div><strong>${uniqueIds.length}</strong><span>My committees</span></div><div><strong>${personalTasks.length}</strong><span>Assigned tasks</span></div><div><strong>${completed}</strong><span>Completed</span></div></div>`;
+  const committees=uniqueIds.length?uniqueIds.map(id=>{
+    const c=state.committees.find(x=>x.id===id);const st=committeeStats(id);
+    const assignments=memberships.filter(m=>m.committeeId===id);
+    return `<article class="my-committee-card"><div class="my-row-head"><div><h3>${esc(c?.name||"Committee")}</h3><p class="muted">${esc(c?.description||"No committee description")}</p></div><button class="small-btn icon-action primary my-view-committee" type="button" data-id="${esc(id)}" title="Go to ${esc(c?.name||"committee")} tasks" aria-label="Go to ${esc(c?.name||"committee")} tasks">${icon("list-todo")}</button></div>
+      <div class="my-assignment-roles">${assignments.map(m=>`<span class="my-role-label"><b>${esc(m.role||"Support")}</b>${m.supportRole?` · ${esc(m.supportRole)}`:""}</span>`).join("")}</div>
+      <div class="progress-row"><div class="progress-track" role="progressbar" aria-valuenow="${st.percent}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(c?.name||"Committee")} completion"><div class="progress-fill" style="width:${st.percent}%"></div></div><span class="progress-value">${st.percent}%</span></div><p class="muted">${st.completed} of ${st.total} committee tasks completed</p></article>`;
+  }).join(""):'<div class="empty-state"><strong>No committee assignment yet</strong>Ask your committee head or Director to assign you.</div>';
+  const myTasks=personalTasks.length?personalTasks.map(t=>{
+    const when=t.status==="Completed"&&t.completedAt?`<span>Completed ${esc(formatCompletionDate(t.completedAt))}${t.completedByName?` by ${esc(t.completedByName)}`:""}</span>`:"";
+    return `<article class="my-task-row"><div class="my-row-head"><div><strong>${esc(t.title)}</strong><p class="muted">${esc(committeeName(t.committeeId))} · ${esc(t.priority||"Normal")} priority${t.dueDate?` · Due ${esc(t.dueDate)}`:""}</p></div>${badge(t.status||"Pending")}</div><div class="my-task-footer">${when?`<small>${when}</small>`:'<small>Assigned to you</small>'}<button class="small-btn icon-action my-view-task" type="button" data-id="${esc(t.id)}" title="Open this task" aria-label="Open task: ${esc(t.title)}">${icon("list-todo")}</button></div></article>`;
+  }).join(""):'<div class="empty-state"><strong>No tasks directly assigned to you</strong>Use the committee icons above to see your committee’s full task list.</div>';
+  panel.innerHTML=summary+`<div class="my-assignments-section"><h3>My committees</h3><div class="my-committee-list">${committees}</div></div><div class="my-assignments-section"><h3>My assigned tasks</h3><div class="my-task-list">${myTasks}</div></div>`;
+  panel.querySelectorAll(".my-view-committee").forEach(b=>b.onclick=()=>{
+    $("#myAssignmentsDialog").close();goToCommitteeTasks(b.dataset.id);
+  });
+  panel.querySelectorAll(".my-view-task").forEach(b=>b.onclick=()=>{
+    const t=state.tasks.find(x=>x.id===b.dataset.id);if(!t)return;
+    $("#myAssignmentsDialog").close();goToCommitteeTasks(t.committeeId);
+    $("#taskSearch").value=t.title;
+    renderTasks();
+  });
+}
+
 function renderSummary(){
   const tasks=activeTasks(),done=tasks.filter(t=>t.status==="Completed").length;
   $("#sumCommittees").textContent=state.committees.length;
@@ -538,7 +592,7 @@ function topMemberEditor(){
   state.managingCommitteeId=null;
   openEditor("Assign committee member",[
     {name:"committeeId",label:"Committee",type:"select",required:true,options:committees.map(c=>({value:c.id,label:c.name}))},
-    {name:"userId",label:"Person",type:"select",required:true,options:users.map(u=>({value:u.id,label:u.name}))},
+    {name:"userId",label:"Person",type:"select",required:true,options:[{value:"",label:"Choose a person…",disabled:true},...users.map(u=>({value:u.id,label:u.name}))]},
     {name:"role",label:"Committee role",type:"select",options:(isManager()?["Head","Support"]:["Support"]).map(x=>({value:x,label:x}))},
     {name:"supportRole",label:"Specific responsibility"}
   ],"saveMember",{committeeId:committees[0].id,role:"Support"});
@@ -640,12 +694,52 @@ function renderReports(){
   $("#activityList").innerHTML=state.activity.slice(0,12).map(a=>`<div class="activity-item"><strong>${esc(a.actorName||"Member")}</strong> ${esc(a.message||"updated an item")}<br><small>${esc(a.timestamp||"")}</small></div>`).join("")||'<p class="muted">No activity recorded yet.</p>';
 }
 
+// Floating editor actions track the *visible* viewport while a mobile keyboard is open.
+// No browser permission is needed; only viewport geometry is read.
+function updateEditorKeyboardPosition(){
+  const dialog=$("#editDialog");
+  if(!dialog?.open)return;
+  const mobile=window.matchMedia("(max-width: 700px)").matches;
+  const vv=window.visualViewport;
+  const lostHeight=vv?Math.max(0,window.innerHeight-vv.height-vv.offsetTop):0;
+  const keyboardOpen=mobile&&lostHeight>110;
+  // A bottom inset moves the Save/Cancel pill just above the soft keyboard.
+  dialog.style.setProperty("--editor-keyboard-inset",(mobile?Math.round(lostHeight):0)+"px");
+  dialog.style.setProperty("--editor-visible-height",Math.round(vv?.height||window.innerHeight)+"px");
+  dialog.style.setProperty("--editor-visual-top",Math.round(vv?.offsetTop||0)+"px");
+  dialog.classList.toggle("editing-keyboard",keyboardOpen);
+}
+function setupEditorKeyboardBar(){
+  const dialog=$("#editDialog");
+  const update=()=>{if(dialog.open)updateEditorKeyboardPosition()};
+  window.visualViewport?.addEventListener("resize",update);
+  window.visualViewport?.addEventListener("scroll",update);
+  window.addEventListener("resize",update);
+  dialog.addEventListener("close",()=>{
+    dialog.classList.remove("editing-keyboard");
+    dialog.style.removeProperty("--editor-keyboard-inset");
+    dialog.style.removeProperty("--editor-visible-height");
+    dialog.style.removeProperty("--editor-visual-top");
+  });
+  // Keep the focused field reachable when the keyboard obscures the lower form.
+  dialog.addEventListener("focusin",event=>{
+    if(!event.target.matches("input, textarea, select"))return;
+    updateEditorKeyboardPosition();
+    setTimeout(()=>{
+      if(dialog.open&&document.activeElement===event.target){
+        updateEditorKeyboardPosition();
+        event.target.scrollIntoView({block:"nearest",behavior:"instant"});
+      }
+    },250);
+  });
+}
+
 // Editors and forms
 function fieldHtml(field,value){
   const v=value??field.value??"",required=field.required?" required":"";
   if(field.type==="hidden")return `<input type="hidden" name="${esc(field.name)}" value="${esc(v)}">`;
   if(field.type==="textarea")return `<label class="field"><span>${esc(field.label)}</span><textarea class="form-input" name="${esc(field.name)}" rows="3"${required}>${esc(v)}</textarea></label>`;
-  if(field.type==="select")return `<label class="field"><span>${esc(field.label)}</span><select class="form-input" name="${esc(field.name)}"${required}>${field.options.map(option=>`<option value="${esc(option.value)}"${String(v)===String(option.value)?" selected":""}>${esc(option.label)}</option>`).join("")}</select></label>`;
+  if(field.type==="select")return `<label class="field"><span>${esc(field.label)}</span><select class="form-input" name="${esc(field.name)}"${required}>${field.options.map(option=>`<option value="${esc(option.value)}"${option.disabled?" disabled":""}${String(v)===String(option.value)?" selected":""}>${esc(option.label)}</option>`).join("")}</select></label>`;
   if(field.type==="chips"){
     const picked=Array.isArray(v)?v:[];
     return `<fieldset class="chip-field"><legend>${esc(field.label)}</legend><div class="chip-list">${field.options.map(option=>`<label class="chip-option"><input type="checkbox" name="${esc(field.name)}" value="${esc(option.value)}"${picked.includes(option.value)?" checked":""}><span>${esc(option.label)}</span></label>`).join("")}</div></fieldset>`;
@@ -660,6 +754,7 @@ function openEditor(title,fields,action,initial={}){
   $("#editForm").dataset.action=action;$("#editForm").dataset.recordId=initial.id||"";
   $("#editForm").querySelector('button[type="submit"]').classList.toggle("hidden",action==="readonly");
   $("#editDialog").showModal();
+  updateEditorKeyboardPosition();
 }
 function committeeEditor(c=null){
   if(!isManager())return toast("Only Directors can edit committee details.");
@@ -674,7 +769,7 @@ function memberEditor(committee,member=null){
   const eligible=(state.bootstrap?.users||[]).filter(u=>active(u.active));
   const fields=[
     {name:"committeeId",type:"hidden",value:committee.id},
-    {name:"userId",label:member?"Replace with person":"Person",type:"select",required:true,options:eligible.map(u=>({value:u.id,label:u.name}))},
+    {name:"userId",label:member?"Replace with person":"Person",type:"select",required:true,options:[...(member?[]:[{value:"",label:"Choose a person…",disabled:true}]),...eligible.map(u=>({value:u.id,label:u.name}))]},
     {name:"role",label:"Committee role",type:"select",options:isManager()?[{value:"Head",label:"Head"},{value:"Support",label:"Support"}]:[{value:"Support",label:"Support"}]},
     {name:"supportRole",label:"Specific responsibility / support role"}
   ];
@@ -695,7 +790,11 @@ function taskEditor(t=null){
     {name:"priority",label:"Priority",type:"select",options:["Low","Normal","High","Urgent"].map(x=>({value:x,label:x}))},
     {name:"dueDate",label:"Due date",type:"date"}
   ];
-  openEditor(t?"Edit task":"Create task",fields,"saveTask",t?{...t,addAssigneesAsSupport:true}:{committeeId:allowed[0].id,assigneeIds:[],priority:"Normal",dueDate:"2026-12-10",addAssigneesAsSupport:true});
+  // Go to tasks sets this same committee filter. Honor it for new tasks,
+  // but never preselect a committee outside the current user's permissions.
+  const selectedFilter=$("#taskCommitteeFilter")?.value||"";
+  const suggestedCommittee=allowed.some(c=>c.id===selectedFilter)?selectedFilter:allowed[0].id;
+  openEditor(t?"Edit task":"Create task",fields,"saveTask",t?{...t,addAssigneesAsSupport:true}:{committeeId:suggestedCommittee,assigneeIds:[],priority:"Normal",dueDate:"2026-12-10",addAssigneesAsSupport:true});
 }
 function financeEditor(entry=null){
   if(!canEditFinance())return toast("Only the Finance Heads or Directors may edit finance records.");
@@ -853,12 +952,72 @@ function buildCommitteeShareText(){
   lines.push("", "Shared for event planning and coordination.");
   return lines.join("\n");
 }
+// Short, chat-first report: every committee, lead/support names and a compact
+// task summary. Detailed mode retains the existing per-task descriptions, roles,
+// due dates and completion attribution.
+function buildCommitteeShareSimplifiedText(){
+  const committees=state.committees.slice();
+  const tasks=activeTasks();
+  const completed=tasks.filter(t=>t.status==="Completed").length;
+  const timestamp=new Intl.DateTimeFormat("en-PH",{month:"short",day:"numeric",year:"numeric",timeZone:"Asia/Manila"}).format(new Date(lastConfirmedAt||Date.now()));
+  const lines=[
+    "🎄 *PASKO NG ANGKAN 2026*",
+    "📅 December 13, 2026",
+    "📋 *COMMITTEE QUICK SUMMARY*",
+    `📊 ${committees.length} committees | ${completed}/${tasks.length} tasks done`,
+    `🕒 Updated: ${timestamp} (PH time)`,
+  ];
+  if(unsyncedCount())lines.push(`⚠️ ${unsyncedCount()} unsynced change(s) included locally.`);
+  if(!committees.length)lines.push("", "No active committees yet.");
+  committees.forEach((committee,index)=>{
+    const members=state.members.filter(m=>m.committeeId===committee.id&&active(m.active));
+    const heads=members.filter(m=>m.role==="Head");
+    const supporters=members.filter(m=>m.role!=="Head");
+    const mine=tasks.filter(t=>t.committeeId===committee.id);
+    const open=mine.filter(t=>t.status!=="Completed");
+    const stats=committeeStats(committee.id);
+    lines.push("", `${index+1}. *${committee.name}* — ${stats.percent}% (${stats.completed}/${stats.total} done)`);
+    lines.push(`👤 Head${heads.length===1?"":"s"}: ${heads.length?heads.map(m=>m.name).join(", "):"Not assigned"}`);
+    if(supporters.length){
+      lines.push(`🤝 Support: ${supporters.map(m=>m.name+(m.supportRole?` (${m.supportRole})`:"")).join("; ")}`);
+    }else lines.push("🤝 Support: None assigned");
+    if(open.length){
+      const maxTasks=2;
+      const titles=open.slice(0,maxTasks).map(t=>`${t.status==="Blocked"?"⛔":"▫️"} ${t.title}`).join("; ");
+      lines.push(`📝 To do (${open.length}): ${titles}${open.length>maxTasks?` (+${open.length-maxTasks} more)`:""}`);
+    }else lines.push(mine.length?"✅ All tasks completed":"📝 No tasks yet");
+  });
+  lines.push("", "For full responsibilities and task details, ask for the detailed committee report.");
+  return lines.join("\n");
+}
+let currentShareMode="simple";
+function setShareMode(mode){
+  currentShareMode=mode==="detailed"?"detailed":"simple";
+  $$("#shareModeTabs [data-share-mode]").forEach(button=>{
+    const selected=button.dataset.shareMode===currentShareMode;
+    button.classList.toggle("active",selected);
+    button.setAttribute("aria-selected",String(selected));
+    button.tabIndex=selected?0:-1;
+  });
+  renderSharePreview();
+}
+function renderSharePreview(){
+  const detailed=currentShareMode==="detailed";
+  const body=detailed?buildCommitteeShareText():buildCommitteeShareSimplifiedText();
+  const field=$("#shareText");
+  if(field.value!==body)field.value=body;
+  const warning=unsyncedCount()>0?` ${unsyncedCount()} change(s) are not yet confirmed; this preview includes local edits.`:"";
+  $("#shareStatus").textContent=detailed
+    ?`Detailed view: all ${state.committees.length} committees, Heads, support/sub-team responsibilities and individual tasks.${warning}`
+    :`Simplified view: ${state.committees.length} committees with Heads, support members, progress and a short to-do summary.${warning}`;
+  $("#sharePreviewLabel").textContent=detailed?"Detailed message · copy for group chat":"Simplified message · copy for group chat";
+  $("#copyShareBtn").setAttribute("title",detailed?"Copy detailed report":"Copy simplified summary");
+  $("#copyShareBtn").setAttribute("aria-label",detailed?"Copy detailed report":"Copy simplified summary");
+  $("#shareText").setAttribute("aria-label",detailed?"Detailed committee report":"Simplified committee report");
+}
 function openShareDialog(){
   if(!state.user){toast("Sign in first to view and share the full committee report.");openLogin();return;}
-  const body=buildCommitteeShareText();
-  $("#shareText").value=body;
-  const warning=unsyncedCount()>0?` ${unsyncedCount()} change(s) are not yet confirmed; this preview includes your local edits.`:"";
-  $("#shareStatus").textContent=`All ${state.committees.length} active committees, their Heads, support roles and ${activeTasks().length} tasks are included.${warning} Copy and paste into your group chat.`;
+  setShareMode("simple");
   if(!$("#shareDialog").open)$("#shareDialog").showModal();
 }
 async function copyShareReport(){
@@ -867,12 +1026,12 @@ async function copyShareReport(){
   try{
     if(!navigator.clipboard?.writeText)throw new Error("Clipboard permission unavailable");
     await navigator.clipboard.writeText(body);
-    toast("Committee report copied! Paste it in your group chat.");
+    toast(`${currentShareMode==="simple"?"Simplified":"Detailed"} report copied! Paste it in your group chat.`);
   }catch{
     field.focus();field.select();field.setSelectionRange(0,field.value.length);
     let copied=false;
     try{copied=document.execCommand("copy")}catch{}
-    toast(copied?"Committee report copied! Paste it in your group chat.":"Select and copy the highlighted text manually.");
+    toast(copied?"Report copied! Paste it in your group chat.":"Select and copy the highlighted text manually.");
   }
 }
 
