@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#172554">
+  <meta name="description" content="Pasko ng Angkan 2026 event management">
+  <title>Pasko ng Angkan 2026</title>
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Pasko ng Angkan home">
+        <span class="brand-mark">✦</span>
+        <span><strong>Pasko ng Angkan</strong><small>EVENT MANAGEMENT · 2026</small></span>
+      </a>
+      <div class="top-actions">
+        <button id="refreshBtn" class="icon-btn" title="Refresh data" aria-label="Refresh">↻</button>
+        <button id="profileBtn" class="profile-chip" aria-label="Open user profile">
+          <span id="avatar" class="avatar">?</span><span id="profileName">Sign in</span><span>⌄</span>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">CHRISTMAS FELLOWSHIP CELEBRATION</p>
+          <h1>Pasko ng Angkan <span>2026</span></h1>
+          <p class="hero-sub">Sunday, December 13, 2026</p>
+        </div>
+        <div class="hero-star" aria-hidden="true">✦</div>
+      </section>
+
+      <section id="summaryStrip" class="summary-grid" aria-label="Event summary">
+        <article class="summary-card"><span>Committees</span><strong id="sumCommittees">—</strong></article>
+        <article class="summary-card"><span>Total tasks</span><strong id="sumTasks">—</strong></article>
+        <article class="summary-card"><span>Completed</span><strong id="sumCompleted">—</strong></article>
+        <article class="summary-card"><span>Needs attention</span><strong id="sumPending">—</strong></article>
+      </section>
+
+      <nav class="tabs" aria-label="Main navigation">
+        <button class="tab active" data-tab="committees"><span>♧</span> Committees</button>
+        <button class="tab" data-tab="tasks"><span>☷</span> To-do list</button>
+        <button class="tab" data-tab="reports"><span>▥</span> Reports</button>
+      </nav>
+
+      <section id="tab-committees" class="tab-panel active">
+        <div class="section-heading">
+          <div><p class="eyebrow">PEOPLE & RESPONSIBILITIES</p><h2>Committee directory</h2><p class="muted">Heads, supporting roles and committee progress.</p></div>
+          <button id="addCommitteeBtn" class="primary-btn admin-only">＋ Add committee</button>
+        </div>
+        <div id="committeeList" class="committee-grid"><div class="loading">Loading committees…</div></div>
+      </section>
+
+      <section id="tab-tasks" class="tab-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">WORK TRACKER</p><h2>To-do list</h2><p class="muted">Members of a committee can update its tasks.</p></div>
+          <button id="addTaskBtn" class="primary-btn">＋ Add task</button>
+        </div>
+        <div class="filters">
+          <label class="field"><span>Committee</span><select id="taskCommitteeFilter"><option value="">All committees</option></select></label>
+          <label class="field"><span>Status</span><select id="taskStatusFilter"><option value="">All statuses</option><option>Pending</option><option>In Progress</option><option>Blocked</option><option>Completed</option></select></label>
+          <label class="field search-field"><span>Search</span><input id="taskSearch" type="search" placeholder="Find a task…"></label>
+        </div>
+        <div id="taskList" class="task-list"><div class="loading">Loading tasks…</div></div>
+      </section>
+
+      <section id="tab-reports" class="tab-panel">
+        <div class="section-heading"><div><p class="eyebrow">DIRECTOR'S VIEW</p><h2>Progress reports</h2><p class="muted">Completion, pending work and committee health.</p></div><button id="exportBtn" class="secondary-btn">↓ Export CSV</button></div>
+        <div id="reportOverview" class="report-overview"></div>
+        <div class="report-columns">
+          <div class="panel"><h3>Committee progress</h3><div id="reportCommittees"></div></div>
+          <div class="panel"><h3>Needs attention</h3><div id="reportPending"></div></div>
+        </div>
+        <div class="panel activity-panel"><h3>Recent activity</h3><div id="activityList"></div></div>
+      </section>
+    </main>
+    <footer><span>Pasko ng Angkan 2026</span><span id="connectionState">Connecting to event database…</span></footer>
+  </div>
+
+  <div id="profileMenu" class="popover hidden">
+    <div class="popover-head"><strong id="menuUserName">Guest</strong><span id="menuUserRole" class="muted">Not signed in</span></div>
+    <button id="editProfileBtn" class="menu-item">Edit profile / switch user</button>
+    <button id="signOutBtn" class="menu-item">Sign out</button>
+  </div>
+
+  <!-- Sign-in / profile modal -->
+  <dialog id="loginDialog" class="modal">
+    <form id="loginForm" class="modal-card">
+      <div class="modal-title"><div><p class="eyebrow">WELCOME</p><h2 id="loginTitle">Identify yourself</h2></div><button type="button" class="close-btn" data-close="loginDialog">×</button></div>
+      <p class="muted">Choose your name and enter your personal PIN. Your updates will be recorded under your profile.</p>
+      <label class="field"><span>Your name</span><select id="loginUser" required></select></label>
+      <label class="field"><span>Personal PIN</span><input id="loginPin" type="password" inputmode="numeric" minlength="4" maxlength="12" autocomplete="current-password" placeholder="Enter your PIN" required></label>
+      <p id="loginError" class="form-error"></p>
+      <button class="primary-btn full-width" type="submit">Continue</button>
+      <small class="muted">New member? Ask the event administrator to add your profile and issue a PIN.</small>
+    </form>
+  </dialog>
+
+  <!-- Generic editor modal -->
+  <dialog id="editDialog" class="modal">
+    <form id="editForm" class="modal-card">
+      <div class="modal-title"><div><p class="eyebrow">EVENT MANAGEMENT</p><h2 id="editTitle">Edit</h2></div><button type="button" class="close-btn" data-close="editDialog">×</button></div>
+      <div id="editFields" class="form-fields"></div>
+      <p id="editError" class="form-error"></p>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="editDialog">Cancel</button><button type="submit" class="primary-btn">Save changes</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>
