@@ -1,8 +1,8 @@
-/* Pasko ng Angkan 2026 — v2.1 browser UI. No frontend password/PIN storage. */
+/* Pasko ng Angkan 2026 — v2.2 browser UI. No frontend password/PIN storage. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
-  activity:[],finance:[],foodItems:[],activeTab:"committees",managingCommitteeId:null
+  activity:[],finance:[],foodItems:[],archivedCommittees:[],activeTab:"committees",managingCommitteeId:null
 };
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -30,7 +30,11 @@ function canEditFood(){return isManager()||isHeadOf("COM-FOOD")}
 function active(value){return value===true||value===1||String(value).toLowerCase()==="true"}
 function userName(id){return (state.bootstrap?.users||[]).find(u=>u.id===id)?.name||id||"Unknown"}
 function committeeName(id){return state.committees.find(c=>c.id===id)?.name||"Unassigned"}
-function committeeProgress(id){const ts=state.tasks.filter(t=>t.committeeId===id);return ts.length?Math.round(ts.reduce((n,t)=>n+(Number(t.progress)||0),0)/ts.length):0}
+// Task-count method: complete tasks / total tasks. Individual task % is independent.
+function committeeStats(id){const ts=state.tasks.filter(t=>t.committeeId===id);const completed=ts.filter(t=>t.status==="Completed").length;return {total:ts.length,completed,percent:ts.length?Math.round(completed*100/ts.length):0}}
+function committeeProgress(id){return committeeStats(id).percent}
+function activeTasks(){const ids=new Set(state.committees.map(c=>c.id));return state.tasks.filter(t=>ids.has(t.committeeId))}
+const localId=()=>"WEB-"+(globalThis.crypto?.randomUUID?.()||Date.now()+"-"+Math.random().toString(36).slice(2));
 function statusClass(value){return value==="Completed"||value==="Done"?"green":value==="Blocked"?"red":value==="In Progress"?"amber":""}
 function badge(value){return `<span class="badge ${statusClass(value)}">${esc(value||"Pending")}</span>`}
 async function api(action,data={}){
@@ -42,11 +46,75 @@ async function api(action,data={}){
     throw err;
   }
 }
-function assertApiV2(response){if(Number(response?.apiVersion)!==2)throw new Error("The Apps Script deployment is not v2. Update Code.gs, deploy a NEW web-app version, and verify assets/js/api.js uses that /exec URL.")}
-function clearSession(){state.user=null;state.token=null;sessionClear();state.tasks=[];state.updates=[];state.finance=[];state.foodItems=[];state.activity=[]}
+function assertApiV22(response){if(Number(response?.apiVersion)!==22)throw new Error("The Apps Script deployment is outdated. Update Code.gs to v2.2, deploy a NEW version, and verify assets/js/api.js uses that /exec URL.")}
+function clearSession(){state.user=null;state.token=null;sessionClear();state.tasks=[];state.updates=[];state.finance=[];state.foodItems=[];state.activity=[];state.archivedCommittees=[];updateSaveState()}
 
+// v2.2 saves: optimistically update the screen, then serialize writes in the background.
+// Never automatically retry a timed-out POST: the server might already have committed it.
+let pendingWrites=0, failedWrites=0, writing=false, writes=[], changeVersion=0;
+let lastRefreshAt=0;
+function updateSaveState(){
+  const el=$("#saveState");if(!el)return;
+  const label=pendingWrites?`Saving ${pendingWrites} change${pendingWrites===1?"":"s"}…`:failedWrites?"Save failed · refresh":"All changes saved";
+  el.textContent=label;
+  el.classList.toggle("saving",pendingWrites>0);
+  el.classList.toggle("save-error",!pendingWrites&&failedWrites>0);
+  el.title=pendingWrites?"Background Google Sheets sync is in progress; keep this page open.":failedWrites?"A save failed. Review records and refresh before retrying.":"Confirmed by Google Apps Script";
+}
+function queueWrite(action,payload,optimistic){
+  if(!state.token)return toast("Sign in to make changes.");
+  const token=state.token;
+  changeVersion++;
+  if(optimistic)optimistic();
+  pendingWrites++;
+  writes.push({action,payload,token});
+  updateSaveState();renderAll();
+  Promise.resolve().then(drainWrites);
+  return true;
+}
+async function drainWrites(){
+  if(writing)return;
+  writing=true;
+  try{
+    while(writes.length){
+      const job=writes.shift();
+      try{
+        const result=await Api.request(job.action,{...job.payload,token:job.token});
+        if(!result?.ok)throw new Error(result?.error||"The server rejected the change.");
+        if(job.action==="addUser"&&result.user&&state.bootstrap){
+          state.bootstrap.users=[...state.bootstrap.users,result.user];renderLoginUsers();
+        }
+      }catch(error){
+        failedWrites++;
+        toast("Save failed: "+error.message+". Review records before retrying.");
+      }finally{
+        pendingWrites--;updateSaveState();
+      }
+    }
+  }finally{
+    writing=false;
+    // Coalesced refresh: one read after the entire batch, never one per edit.
+    try{await refreshData()}catch(err){failedWrites++;toast("Background refresh failed: "+err.message)}
+    updateSaveState();
+    if(writes.length)Promise.resolve().then(drainWrites);
+  }
+}
+function allowNavigation(){if(pendingWrites){toast("Please keep this page open: changes are still syncing.");return false}return true}
+async function manualRefresh(){
+  if(!allowNavigation())return;
+  try{await loadBootstrap();const updated=await refreshData();if(updated!==false){failedWrites=0;updateSaveState();toast("Data refreshed")}}
+  catch(err){toast(err.message)}
+}
+function backgroundRefresh(){
+  if(!state.token||pendingWrites||writing||document.visibilityState!=="visible"||$("#editDialog").open)return;
+  refreshData().catch(err=>setConnection("Sync delayed: "+err.message));
+}
 async function init(){
   bindEvents();
+  updateSaveState();
+  setInterval(()=>{if(Date.now()-lastRefreshAt>60000)backgroundRefresh()},60000);
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&Date.now()-lastRefreshAt>60000)backgroundRefresh()});
+  window.addEventListener("beforeunload",event=>{if(pendingWrites){event.preventDefault();event.returnValue=""}});
   try {
     await loadBootstrap();
     const stored=sessionGet();
@@ -60,31 +128,48 @@ async function init(){
 async function loadBootstrap(){
   const result=await Api.request("bootstrap");
   if(!result?.ok)throw new Error(result?.error||"Database setup failed");
-  assertApiV2(result);
+  assertApiV22(result);
   state.bootstrap=result;state.committees=result.committees||[];state.members=result.members||[];
+  renderLoginUsers();
+
+}
+function renderLoginUsers(){
   const select=$("#loginUser"),previous=select.value;
-  select.innerHTML=(result.users||[]).filter(u=>active(u.active)).map(u=>`<option value="${esc(u.id)}">${esc(u.name)} · ${esc(u.position||u.accessRole)}</option>`).join("");
+  select.innerHTML=(state.bootstrap?.users||[]).filter(u=>active(u.active)).map(u=>`<option value="${esc(u.id)}">${esc(u.name)} · ${esc(u.position||u.accessRole)}</option>`).join("");
   if([...select.options].some(o=>o.value===previous))select.value=previous;
   renderLoginPreview();
 }
 function renderConnectionError(message){$("#committeeList").innerHTML=`<div class="empty-state"><strong>Database connection needs attention</strong>${esc(message)}<p class="muted">Check the Apps Script v2 deployment, the shared /exec URL, and your spreadsheet schema.</p></div>`}
 async function refreshData(){
-  if(!state.token){await loadBootstrap();renderAll();return}
+  if(!state.token){await loadBootstrap();renderAll();return true}
+  if(pendingWrites)return false;
+  const version=changeVersion,token=state.token;
   const result=await api("getData");
   if(!result?.ok)throw new Error(result?.error||"Could not load event records");
-  assertApiV2(result);
+  assertApiV22(result);
+  // Prevent an older read from overwriting a newer optimistic edit.
+  if(version!==changeVersion||token!==state.token||pendingWrites)return false;
   state.committees=result.committees||[];state.members=result.members||[];
-  state.tasks=result.tasks||[];state.updates=result.updates||[];state.activity=result.activity||[];
+  state.tasks=result.tasks||[];state.activity=result.activity||[];
   state.finance=result.finance||[];state.foodItems=result.foodItems||[];
-  if(state.bootstrap){state.bootstrap.members=state.members;state.bootstrap.committees=state.committees}
-  setConnection(`Signed in as ${state.user.name}`,true);renderAll();
+  state.archivedCommittees=result.archivedCommittees||[];
+  if(state.bootstrap){
+    state.bootstrap.members=state.members;state.bootstrap.committees=state.committees;
+    if(result.users)state.bootstrap.users=result.users;
+    renderLoginUsers();
+  }
+  lastRefreshAt=Date.now();
+  setConnection(`Signed in as ${state.user.name}`,true);renderAll();return true;
 }
+
 function bindEvents(){
   $$(".tab").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab)));
-  $("#refreshBtn").onclick=async()=>{try{await loadBootstrap();await refreshData();toast("Data refreshed")}catch(err){toast(err.message)}};
+  $("#refreshBtn").onclick=manualRefresh;
   $("#profileBtn").onclick=()=>$("#profileMenu").classList.toggle("hidden");
-  $("#editProfileBtn").onclick=()=>{$("#profileMenu").classList.add("hidden");openLogin(true)};
-  $("#signOutBtn").onclick=()=>{clearSession();$("#profileMenu").classList.add("hidden");renderAll();setConnection("Signed out");openLogin()};
+  $("#editProfileBtn").onclick=()=>{if(!allowNavigation())return;$("#profileMenu").classList.add("hidden");openLogin(true)};
+  $("#addUserMenuBtn").onclick=()=>{$("#profileMenu").classList.add("hidden");userEditor()};
+  $("#archiveMenuBtn").onclick=()=>{$("#profileMenu").classList.add("hidden");openArchives()};
+  $("#signOutBtn").onclick=()=>{if(!allowNavigation())return;clearSession();$("#profileMenu").classList.add("hidden");renderAll();setConnection("Signed out");openLogin()};
   $("#loginUser").onchange=renderLoginPreview;
   $("#loginForm").onsubmit=login;
   $("#addCommitteeBtn").onclick=()=>committeeEditor();
@@ -144,17 +229,19 @@ function renderProfile(){
   $("#addTaskBtn").classList.toggle("hidden",!canCreateTasks());
   $("#addFinanceBtn").classList.toggle("hidden",!canEditFinance());
   $("#addFoodBtn").classList.toggle("hidden",!canEditFood());
+  $("#addUserMenuBtn").classList.toggle("hidden",!isManager());
+  $("#archiveMenuBtn").classList.toggle("hidden",!isManager());
 }
 function renderAll(){
   renderProfile();populateFilters();renderSummary();renderCommittees();renderTasks();renderFinance();renderFood();renderReports();
-  switchTab(state.activeTab);
+  switchTab(state.activeTab);if($("#archivesDialog").open)renderArchives();
 }
 function renderSummary(){
-  const done=state.tasks.filter(t=>t.status==="Completed").length;
+  const tasks=activeTasks(),done=tasks.filter(t=>t.status==="Completed").length;
   $("#sumCommittees").textContent=state.committees.length;
-  $("#sumTasks").textContent=state.tasks.length;
+  $("#sumTasks").textContent=tasks.length;
   $("#sumCompleted").textContent=done;
-  $("#sumPending").textContent=state.tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length;
+  $("#sumPending").textContent=tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length;
 }
 function renderCommittees(){
   const host=$("#committeeList");
@@ -162,12 +249,12 @@ function renderCommittees(){
   host.innerHTML=state.committees.map(c=>{
     const memberships=state.members.filter(m=>m.committeeId===c.id&&active(m.active));
     const heads=memberships.filter(m=>m.role==="Head").map(m=>m.name);
-    const progress=committeeProgress(c.id);
+    const stats=committeeStats(c.id),progress=stats.percent;
     return `<article class="committee-card" data-committee="${esc(c.id)}"><div class="card-top"><div><h3>${esc(c.name)}</h3><div class="head-line">Head${heads.length===1?"":"s"}: ${esc(heads.join(", ")||"To be assigned")}</div></div>${badge(active(c.active)?"Active":"Inactive")}</div>
       ${c.description?`<p class="muted committee-desc">${esc(c.description)}</p>`:""}
-      <div class="progress-row"><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><span class="progress-value">${progress}%</span></div>
+      <div class="progress-row"><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><span class="progress-value">${progress}%</span></div><div class="progress-caption">${stats.completed} of ${stats.total} tasks completed · Auto-calculated</div>
       <div class="member-line">${memberships.length?memberships.map(m=>`<span class="member-pill">${esc(m.name)} · ${esc(m.role)}${m.supportRole?" · "+esc(m.supportRole):""}</span>`).join(""):"No members assigned"}</div>
-      <div class="task-actions">${canManageMembers(c.id)?`<button type="button" class="small-btn primary manage-members" data-id="${esc(c.id)}">Manage members</button>`:""}${isManager()?`<button type="button" class="small-btn edit-committee" data-id="${esc(c.id)}">Edit details</button>`:""}</div></article>`;
+      <div class="task-actions">${canManageMembers(c.id)?`<button type="button" class="small-btn primary manage-members" data-id="${esc(c.id)}">Manage members</button>`:""}${isManager()?`<button type="button" class="small-btn edit-committee" data-id="${esc(c.id)}">Edit details</button><button type="button" class="small-btn danger-text delete-committee" data-id="${esc(c.id)}">Delete committee</button>`:""}</div></article>`;
   }).join("");
   host.querySelectorAll(".committee-card").forEach(card=>card.onclick=ev=>{
     if(ev.target.closest("button"))return;
@@ -175,6 +262,7 @@ function renderCommittees(){
   });
   host.querySelectorAll(".manage-members").forEach(b=>b.onclick=()=>openMembers(b.dataset.id));
   host.querySelectorAll(".edit-committee").forEach(b=>b.onclick=()=>committeeEditor(state.committees.find(c=>c.id===b.dataset.id)));
+  host.querySelectorAll(".delete-committee").forEach(b=>b.onclick=()=>archiveCommittee(b.dataset.id));
 }
 function openMembers(committeeId){
   const c=state.committees.find(x=>x.id===committeeId);
@@ -199,9 +287,49 @@ function renderMembersDialog(){
     const member=state.members.find(m=>m.id===b.dataset.id);
     if(!member)return;
     if(!await confirmAction(`Remove ${member.name} from ${c.name}? Existing task history will remain.`))return;
-    try{const result=await api("removeMember",{memberId:member.id});if(!result?.ok)throw new Error(result?.error||"Unable to remove member");await refreshData();renderMembersDialog();toast("Member removed")}
-    catch(err){toast(err.message)}
+    queueWrite("removeMember",{memberId:member.id},()=>{state.members=state.members.filter(m=>m.id!==member.id);if(state.bootstrap)state.bootstrap.members=state.members});
+    renderMembersDialog();toast("Member removed. Saving in background…");
   });
+}
+async function archiveCommittee(id){
+  if(!isManager())return toast("Only Directors can delete committees.");
+  const committee=state.committees.find(c=>c.id===id);if(!committee)return;
+  const stats=committeeStats(id);
+  if(!await confirmAction(`Delete ${committee.name} from active committees? ${stats.total} task(s) and all member assignments will be hidden, but kept in Google Sheets so a Director can restore them.`))return;
+  queueWrite("deleteCommittee",{id},()=>{
+    state.committees=state.committees.filter(c=>c.id!==id);
+    state.archivedCommittees=[...state.archivedCommittees,{...committee,active:false}];
+    if(state.bootstrap)state.bootstrap.committees=state.committees;
+  });
+  toast("Committee removed from active view. Syncing in background…");
+}
+function openArchives(){
+  if(!isManager())return toast("Director access required.");
+  renderArchives();$("#archivesDialog").showModal();
+}
+function renderArchives(){
+  $("#archivesList").innerHTML=state.archivedCommittees.length?state.archivedCommittees.map(c=>`<div class="manager-member-row"><div><strong>${esc(c.name)}</strong><p class="muted">Members and tasks retained for recovery</p></div><button type="button" class="small-btn restore-committee" data-id="${esc(c.id)}">Restore</button></div>`).join(""):'<div class="empty-state">No deleted committees.</div>';
+  $$(".restore-committee").forEach(b=>b.onclick=()=>{
+    const c=state.archivedCommittees.find(x=>x.id===b.dataset.id);if(!c)return;
+    queueWrite("restoreCommittee",{id:c.id},()=>{
+      state.archivedCommittees=state.archivedCommittees.filter(x=>x.id!==c.id);
+      state.committees.push({...c,active:true});if(state.bootstrap)state.bootstrap.committees=state.committees;
+    });
+    renderArchives();toast("Restoration syncing in background…");
+  });
+}
+function userEditor(){
+  if(!isManager())return toast("Only Directors can add users.");
+  openEditor("Add new user",[
+    {name:"name",label:"Full name",required:true},
+    {name:"position",label:"Position / responsibility"}
+  ],"addUser",{});
+}
+function quickComplete(id){
+  const task=state.tasks.find(t=>t.id===id);if(!task||!canUpdateTask(task))return;
+  const update={status:"Completed",progress:100,note:"Marked completed using quick action"};
+  queueWrite("updateTask",{taskId:id,update},()=>Object.assign(task,{status:"Completed",progress:100,latestUpdate:update.note}));
+  toast("Task marked complete. Saving in background…");
 }
 function populateFilters(){
   const filter=$("#taskCommitteeFilter"),current=filter.value;
@@ -210,7 +338,7 @@ function populateFilters(){
 }
 function renderTasks(){
   const committeeId=$("#taskCommitteeFilter").value,status=$("#taskStatusFilter").value,query=$("#taskSearch").value.toLowerCase();
-  const matches=state.tasks.filter(t=>(!committeeId||t.committeeId===committeeId)&&(!status||t.status===status)&&(!query||(t.title+" "+(t.description||"")+" "+committeeName(t.committeeId)).toLowerCase().includes(query)));
+  const matches=activeTasks().filter(t=>(!committeeId||t.committeeId===committeeId)&&(!status||t.status===status)&&(!query||(t.title+" "+(t.description||"")+" "+committeeName(t.committeeId)).toLowerCase().includes(query)));
   $("#taskList").innerHTML=matches.length?matches.map(t=>{
     const names=(Array.isArray(t.assigneeIds)?t.assigneeIds:[]).map(userName).join(", ")||"Not assigned";
     const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
@@ -219,11 +347,12 @@ function renderTasks(){
       <div class="progress-row"><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><span class="progress-value">${progress}%</span></div>
       <div class="task-meta task-details"><span>Due: ${esc(t.dueDate||"Not set")}</span><span>·</span><span>Priority: ${esc(t.priority||"Normal")}</span></div>
       ${t.latestUpdate?`<div class="task-note">Latest update: ${esc(t.latestUpdate)}</div>`:""}
-      <div class="task-actions">${canUpdateTask(t)?`<button class="small-btn primary update-task" data-id="${esc(t.id)}">Update progress</button><button class="small-btn history-task" data-id="${esc(t.id)}">History</button>`:""}${canEditTask(t)?`<button class="small-btn edit-task" data-id="${esc(t.id)}">Edit task</button>`:""}</div></article>`;
+      <div class="task-actions">${canUpdateTask(t)?`<button class="small-btn primary update-task" data-id="${esc(t.id)}">Update progress</button><button class="small-btn history-task" data-id="${esc(t.id)}">History</button>${t.status!=="Completed"?`<button class="small-btn quick-complete" data-id="${esc(t.id)}">✓ Mark complete</button>`:""}`:""}${canEditTask(t)?`<button class="small-btn edit-task" data-id="${esc(t.id)}">Edit task</button>`:""}</div></article>`;
   }).join(""):'<div class="empty-state"><strong>No matching tasks</strong>Try another filter or add a task.</div>';
   $$(".update-task").forEach(b=>b.onclick=()=>updateTaskEditor(state.tasks.find(t=>t.id===b.dataset.id)));
   $$(".history-task").forEach(b=>b.onclick=()=>showHistory(b.dataset.id));
   $$(".edit-task").forEach(b=>b.onclick=()=>taskEditor(state.tasks.find(t=>t.id===b.dataset.id)));
+  $$(".quick-complete").forEach(b=>b.onclick=()=>quickComplete(b.dataset.id));
 }
 function renderFinance(){
   const sum=type=>state.finance.filter(entry=>entry.type===type).reduce((n,entry)=>n+(Number(entry.amount)||0),0);
@@ -236,8 +365,8 @@ function renderFinance(){
   $$(".finance-delete").forEach(b=>b.onclick=async()=>{
     const entry=state.finance.find(x=>x.id===b.dataset.id);if(!entry)return;
     if(!await confirmAction(`Delete ${money(entry.amount)} — ${entry.description}? This cannot be undone.`))return;
-    try{const r=await api("deleteFinance",{id:entry.id});if(!r?.ok)throw new Error(r?.error||"Delete failed");await refreshData();toast("Finance entry deleted")}
-    catch(err){toast(err.message)}
+    queueWrite("deleteFinance",{id:entry.id},()=>{state.finance=state.finance.filter(x=>x.id!==entry.id)});
+    toast("Finance entry deleted. Saving in background…");
   });
 }
 function renderFood(){
@@ -250,24 +379,26 @@ function renderFood(){
   $$(".food-edit").forEach(b=>b.onclick=()=>foodEditor(state.foodItems.find(x=>x.id===b.dataset.id)));
   $$(".food-toggle").forEach(b=>b.onclick=async()=>{
     const item=state.foodItems.find(x=>x.id===b.dataset.id);if(!item)return;
-    try{const r=await api("saveFoodItem",{item:{...item,status:item.status==="Done"?"Todo":"Done"}});if(!r?.ok)throw new Error(r?.error||"Status update failed");await refreshData();toast("Food item updated")}
-    catch(err){toast(err.message)}
+    const next={...item,status:item.status==="Done"?"Todo":"Done"};
+    queueWrite("saveFoodItem",{item:next},()=>Object.assign(item,next));
+    toast("Food status updated. Saving in background…");
   });
   $$(".food-delete").forEach(b=>b.onclick=async()=>{
     const item=state.foodItems.find(x=>x.id===b.dataset.id);if(!item)return;
     if(!await confirmAction(`Delete ${item.item} from the food list?`))return;
-    try{const r=await api("deleteFoodItem",{id:item.id});if(!r?.ok)throw new Error(r?.error||"Delete failed");await refreshData();toast("Food item deleted")}
-    catch(err){toast(err.message)}
+    queueWrite("deleteFoodItem",{id:item.id},()=>{state.foodItems=state.foodItems.filter(x=>x.id!==item.id)});
+    toast("Food item deleted. Saving in background…");
   });
 }
 function renderReports(){
-  const total=state.tasks.length,done=state.tasks.filter(t=>t.status==="Completed").length;
-  const blocked=state.tasks.filter(t=>t.status==="Blocked").length;
-  const pending=state.tasks.filter(t=>t.status==="Pending").length;
-  const progress=total?Math.round(state.tasks.reduce((n,t)=>n+(Number(t.progress)||0),0)/total):0;
-  $("#reportOverview").innerHTML=`<div class="completion-card"><span class="muted">Overall task progress</span><strong>${progress}%</strong><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div></div><div class="report-stats"><div class="report-stat"><span>Total tasks</span><strong>${total}</strong></div><div class="report-stat"><span>Completed</span><strong style="color:var(--green)">${done}</strong></div><div class="report-stat"><span>Pending</span><strong>${pending}</strong></div><div class="report-stat"><span>In progress</span><strong>${state.tasks.filter(t=>t.status==="In Progress").length}</strong></div><div class="report-stat"><span>Blocked</span><strong>${blocked}</strong></div><div class="report-stat"><span>Committees</span><strong>${state.committees.length}</strong></div></div>`;
-  $("#reportCommittees").innerHTML=state.committees.map(c=>`<div class="report-line"><div class="report-line-head"><strong>${esc(c.name)}</strong><span>${committeeProgress(c.id)}%</span></div><div class="progress-track"><div class="progress-fill" style="width:${committeeProgress(c.id)}%"></div></div></div>`).join("")||'<p class="muted">No committees found.</p>';
-  const attention=state.tasks.filter(t=>["Pending","Blocked"].includes(t.status)||(t.dueDate&&new Date(t.dueDate+"T23:59:59")<new Date()&&t.status!=="Completed"));
+  const tasks=activeTasks();
+  const total=tasks.length,done=tasks.filter(t=>t.status==="Completed").length;
+  const blocked=tasks.filter(t=>t.status==="Blocked").length;
+  const pending=tasks.filter(t=>t.status==="Pending").length;
+  const progress=total?Math.round(done*100/total):0;
+  $("#reportOverview").innerHTML=`<div class="completion-card"><span class="muted">Overall task completion (by task count)</span><strong>${progress}%</strong><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><small class="muted">${done} of ${total} tasks completed</small></div><div class="report-stats"><div class="report-stat"><span>Total tasks</span><strong>${total}</strong></div><div class="report-stat"><span>Completed</span><strong style="color:var(--green)">${done}</strong></div><div class="report-stat"><span>Pending</span><strong>${pending}</strong></div><div class="report-stat"><span>In progress</span><strong>${tasks.filter(t=>t.status==="In Progress").length}</strong></div><div class="report-stat"><span>Blocked</span><strong>${blocked}</strong></div><div class="report-stat"><span>Committees</span><strong>${state.committees.length}</strong></div></div>`;
+  $("#reportCommittees").innerHTML=state.committees.map(c=>{const x=committeeStats(c.id);return `<div class="report-line"><div class="report-line-head"><strong>${esc(c.name)}</strong><span>${x.completed}/${x.total} completed · ${x.percent}%</span></div><div class="progress-track"><div class="progress-fill" style="width:${x.percent}%"></div></div></div>`}).join("")||'<p class="muted">No committees found.</p>';
+  const attention=tasks.filter(t=>["Pending","Blocked"].includes(t.status)||(t.dueDate&&new Date(t.dueDate+"T23:59:59")<new Date()&&t.status!=="Completed"));
   $("#reportPending").innerHTML=attention.length?attention.map(t=>`<div class="attention-item"><strong>${esc(t.title)} ${badge(t.status)}</strong><small>${esc(committeeName(t.committeeId))} · Due ${esc(t.dueDate||"No deadline")}</small></div>`).join(""):'<div class="empty-state">No pending or blocked tasks.</div>';
   $("#activityList").innerHTML=state.activity.slice(0,12).map(a=>`<div class="activity-item"><strong>${esc(a.actorName||"Member")}</strong> ${esc(a.message||"updated an item")}<br><small>${esc(a.timestamp||"")}</small></div>`).join("")||'<p class="muted">No activity recorded yet.</p>';
 }
@@ -306,12 +437,12 @@ function memberEditor(committee,member=null){
   const eligible=(state.bootstrap?.users||[]).filter(u=>active(u.active));
   const fields=[
     {name:"committeeId",type:"hidden",value:committee.id},
-    {name:"userId",label:"Person",type:"select",required:true,options:eligible.map(u=>({value:u.id,label:u.name}))},
+    {name:"userId",label:member?"Replace with person":"Person",type:"select",required:true,options:eligible.map(u=>({value:u.id,label:u.name}))},
     {name:"role",label:"Committee role",type:"select",options:isManager()?[{value:"Head",label:"Head"},{value:"Support",label:"Support"}]:[{value:"Support",label:"Support"}]},
     {name:"supportRole",label:"Specific responsibility / support role"}
   ];
   if($("#membersDialog").open)$("#membersDialog").close();
-  openEditor(member?"Edit committee assignment":"Assign committee member",fields,"saveMember",member?{...member,committeeId:committee.id}:{committeeId:committee.id,role:isManager()?"Support":"Support"});
+  openEditor(member?"Replace / edit assignment":"Assign committee member",fields,"saveMember",member?{...member,committeeId:committee.id}:{committeeId:committee.id,role:"Support"});
 }
 function taskEditor(t=null){
   if(!state.user)return openLogin();
@@ -367,7 +498,7 @@ function collectFields(form){
   form.querySelectorAll('.toggle-line input[type="checkbox"]').forEach(input=>data[input.name]=input.checked);
   return data;
 }
-async function saveEditor(ev){
+function saveEditor(ev){
   ev.preventDefault();
   const form=ev.target,action=form.dataset.action,recordId=form.dataset.recordId;
   if(action==="readonly")return;
@@ -376,24 +507,63 @@ async function saveEditor(ev){
     const previously=state.tasks.find(t=>t.id===recordId);
     if(previously&&!isManager()&&data.committeeId!==previously.committeeId){$("#editError").textContent="Only Directors may move tasks to another committee.";return}
   }
-  const button=form.querySelector('button[type="submit"]');button.disabled=true;$("#editError").textContent="";
-  try{
-    let response;
-    switch(action){
-      case "saveCommittee":response=await api(action,{committee:data});break;
-      case "saveMember":response=await api(action,{member:data});break;
-      case "saveTask":response=await api(action,{task:data});break;
-      case "updateTask":response=await api(action,{taskId:recordId,update:{status:data.status,progress:Number(data.progress),note:data.updateNote}});break;
-      case "saveFinance":response=await api(action,{entry:data});break;
-      case "saveFoodItem":response=await api(action,{item:data});break;
-      default:throw new Error("Unsupported form action")
+  if(action==="updateTask"&&data.status==="Completed"&&Number(data.progress)<100){
+    $("#editError").textContent="Set task progress to 100% before marking it completed.";return;
+  }
+  if(action==="addUser"&&(state.bootstrap?.users||[]).some(u=>u.name.trim().toLowerCase()===String(data.name||"").trim().toLowerCase())){
+    $("#editError").textContent="This user name is already registered.";return;
+  }
+  let payload,optimistic;
+  switch(action){
+    case "saveCommittee":{
+      const old=state.committees.find(c=>c.id===recordId), id=recordId||localId();
+      payload={committee:{...data,id}};
+      optimistic=()=>{const v={...old,...data,id,active:true};if(old)Object.assign(old,v);else state.committees.push(v);if(state.bootstrap)state.bootstrap.committees=state.committees};break;
     }
-    if(!response?.ok)throw new Error(response?.error||"Save failed");
-    $("#editDialog").close();await refreshData();toast("Changes saved successfully");
-    if(action==="saveMember"&&state.managingCommitteeId&&canManageMembers(state.managingCommitteeId))openMembers(state.managingCommitteeId);
-  }catch(err){$("#editError").textContent=err.message}
-  finally{button.disabled=false}
+    case "saveMember":{
+      const target=(state.bootstrap?.users||[]).find(u=>u.id===data.userId);
+      const original=recordId?state.members.find(m=>m.id===recordId):null;
+      const duplicate=state.members.find(m=>m.id!==original?.id&&m.committeeId===data.committeeId&&m.userId===data.userId);
+      if(duplicate){$("#editError").textContent="That person is already assigned to this committee. Choose someone else.";return}
+      const id=original?.id||recordId||localId();
+      payload={member:{...data,id}};
+      optimistic=()=>{
+        const item={...original,...data,id,name:target?.name||"",active:true};
+        if(original)Object.assign(original,item);else state.members.push(item);
+        if(state.bootstrap)state.bootstrap.members=state.members;
+      };break;
+    }
+    case "saveTask":{
+      const old=state.tasks.find(t=>t.id===recordId), id=recordId||localId();
+      const task={...data,id,assigneeIds:Array.isArray(data.assigneeIds)?data.assigneeIds:[],status:old?.status||"Pending",progress:old?.progress||0,latestUpdate:old?.latestUpdate||""};
+      payload={task};
+      optimistic=()=>{if(old)Object.assign(old,task);else state.tasks.push(task)};break;
+    }
+    case "updateTask":{
+      const old=state.tasks.find(t=>t.id===recordId);if(!old)return;
+      const update={status:data.status,progress:Number(data.progress),note:data.updateNote};
+      payload={taskId:recordId,update};
+      optimistic=()=>Object.assign(old,{status:update.status,progress:update.progress,latestUpdate:update.note});break;
+    }
+    case "saveFinance":{
+      const old=state.finance.find(f=>f.id===recordId),id=recordId||localId();
+      payload={entry:{...data,id}};
+      optimistic=()=>{const item={...old,...data,id,amount:Number(data.amount),recordedBy:old?.recordedBy||state.user.id,recordedByName:old?.recordedByName||state.user.name};if(old)Object.assign(old,item);else state.finance.push(item)};break;
+    }
+    case "saveFoodItem":{
+      const old=state.foodItems.find(f=>f.id===recordId),id=recordId||localId();
+      payload={item:{...data,id}};
+      optimistic=()=>{const item={...old,...data,id,assignedToName:userName(data.assignedTo)||""};if(!data.assignedTo)item.assignedToName="";if(old)Object.assign(old,item);else state.foodItems.push(item)};break;
+    }
+    case "addUser":payload={user:data};optimistic=null;break;
+    default:$("#editError").textContent="Unsupported form action.";return;
+  }
+  queueWrite(action,payload,optimistic);
+  $("#editDialog").close();
+  if(action==="saveMember"&&state.managingCommitteeId&&canManageMembers(state.managingCommitteeId))openMembers(state.managingCommitteeId);
+  toast("Updated instantly. Saving to Google Sheets in background…");
 }
+
 async function showHistory(taskId){
   try{
     const response=await api("getTaskUpdates",{taskId});
@@ -417,7 +587,7 @@ function confirmAction(message){
   });
 }
 function exportCsv(){
-  const rows=[["Committee","Task","Assignees","Status","Progress","Priority","Due date"],...state.tasks.map(t=>[
+  const rows=[["Committee","Task","Assignees","Status","Progress","Priority","Due date"],...activeTasks().map(t=>[
     committeeName(t.committeeId),t.title,(Array.isArray(t.assigneeIds)?t.assigneeIds:[]).map(userName).join("; "),t.status,t.progress,t.priority,t.dueDate
   ])];
   const csv="\ufeff"+rows.map(row=>row.map(value=>'"'+String(value??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");

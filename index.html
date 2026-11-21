@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#172554">
   <meta name="description" content="Pasko ng Angkan 2026 event management">
   <title>Pasko ng Angkan 2026</title>
-  <link rel="stylesheet" href="assets/css/style.css?v=2.1">
+  <link rel="stylesheet" href="assets/css/style.css?v=2.2">
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -16,6 +16,7 @@
         <span><strong>Pasko ng Angkan</strong><small>EVENT MANAGEMENT · 2026</small></span>
       </a>
       <div class="top-actions">
+        <span id="saveState" class="save-state" role="status" aria-live="polite">All changes saved</span>
         <button id="refreshBtn" class="icon-btn" title="Refresh data" aria-label="Refresh">↻</button>
         <button id="profileBtn" class="profile-chip" aria-label="Open user profile">
           <span id="avatar" class="avatar">?</span><span id="profileName">Sign in</span><span>⌄</span>
@@ -50,7 +51,7 @@
 
       <section id="tab-committees" class="tab-panel active">
         <div class="section-heading">
-          <div><p class="eyebrow">PEOPLE & RESPONSIBILITIES</p><h2>Committee directory</h2><p class="muted">Heads, supporting roles and committee progress.</p></div>
+          <div><p class="eyebrow">PEOPLE & RESPONSIBILITIES</p><h2>Committee directory</h2><p class="muted">Progress automatically updates from completed tasks ÷ total tasks.</p></div>
           <button id="addCommitteeBtn" class="primary-btn admin-only">＋ Add committee</button>
         </div>
         <div id="committeeList" class="committee-grid"><div class="loading">Loading committees…</div></div>
@@ -94,7 +95,7 @@
       </section>
 
       <section id="tab-reports" class="tab-panel">
-        <div class="section-heading"><div><p class="eyebrow">DIRECTOR'S VIEW</p><h2>Progress reports</h2><p class="muted">Completion, pending work and committee health.</p></div><button id="exportBtn" class="secondary-btn">↓ Export CSV</button></div>
+        <div class="section-heading"><div><p class="eyebrow">DIRECTOR'S VIEW</p><h2>Progress reports</h2><p class="muted">Progress is automatically based on the number of completed tasks.</p></div><button id="exportBtn" class="secondary-btn">↓ Export CSV</button></div>
         <div id="reportOverview" class="report-overview"></div>
         <div class="report-columns">
           <div class="panel"><h3>Committee progress</h3><div id="reportCommittees"></div></div>
@@ -108,7 +109,9 @@
 
   <div id="profileMenu" class="popover hidden">
     <div class="popover-head"><strong id="menuUserName">Guest</strong><span id="menuUserRole" class="muted">Not signed in</span></div>
-    <button id="editProfileBtn" class="menu-item">Edit profile / switch user</button>
+    <button id="addUserMenuBtn" class="menu-item admin-only hidden">＋ Add new user</button>
+    <button id="archiveMenuBtn" class="menu-item admin-only hidden">Archived committees / Restore</button>
+    <button id="editProfileBtn" class="menu-item">Switch user</button>
     <button id="signOutBtn" class="menu-item">Sign out</button>
   </div>
 
@@ -146,6 +149,16 @@
     </div>
   </dialog>
 
+  <!-- Archived committee recovery — Director/Assistant Director only -->
+  <dialog id="archivesDialog" class="modal wide-modal">
+    <div class="modal-card">
+      <div class="modal-title"><div><p class="eyebrow">RECOVERY</p><h2>Archived committees</h2></div><button type="button" class="close-btn" data-close="archivesDialog" aria-label="Close">×</button></div>
+      <p class="muted">Deleted committees are hidden, not erased. Their task and membership history remains in Google Sheets.</p>
+      <div id="archivesList" class="member-manager-list"></div>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="archivesDialog">Close</button></div>
+    </div>
+  </dialog>
+
   <!-- Confirmation dialog: prevents accidental deletion -->
   <dialog id="confirmDialog" class="modal">
     <div class="modal-card">
@@ -156,7 +169,7 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="assets/js/api.js?v=2.1"></script>
-  <script src="assets/js/app.js?v=2.1"></script>
+  <script src="assets/js/api.js?v=2.2"></script>
+  <script src="assets/js/app.js?v=2.2"></script>
 </body>
 </html>
