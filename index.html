@@ -7,6 +7,7 @@
   <meta name="description" content="Pasko ng Angkan 2026 event management">
   <title>Pasko ng Angkan 2026</title>
   <link rel="stylesheet" href="assets/css/style.css?v=2.7">
+  <link rel="stylesheet" href="assets/css/hero-animation.css?v=2.8">
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -44,13 +45,87 @@
     </header>
 
     <main>
-      <section class="hero">
-        <div>
+      <section class="hero hero-animated" aria-label="Pasko ng Angkan Christmas celebration">
+        <!-- Decorative slideshow only: content, title, date, layout and app behavior stay unchanged. -->
+        <div class="hero-art" aria-hidden="true">
+          <div class="hero-scene hero-scene-winter">
+            <svg viewBox="0 0 460 270" preserveAspectRatio="xMidYMid meet" focusable="false">
+              <defs>
+                <radialGradient id="winterHalo"><stop offset="0" stop-color="#d5e9ff" stop-opacity=".30"/><stop offset="1" stop-color="#d5e9ff" stop-opacity="0"/></radialGradient>
+                <linearGradient id="winterHills" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#b3d1ef" stop-opacity=".9"/><stop offset="1" stop-color="#dbeafd" stop-opacity=".5"/></linearGradient>
+              </defs>
+              <circle cx="337" cy="81" r="91" fill="url(#winterHalo)"/>
+              <circle cx="345" cy="70" r="27" fill="#dcecff" opacity=".82"/>
+              <g fill="#dcecff" opacity=".82"><circle cx="232" cy="47" r="2"/><circle cx="409" cy="38" r="2"/><circle cx="267" cy="100" r="1.4"/><circle cx="430" cy="117" r="1.5"/></g>
+              <path d="M40 232Q117 178 220 215Q305 168 454 215V270H40Z" fill="#7faed8" opacity=".36"/>
+              <path d="M10 250Q117 208 219 235Q325 195 468 236V275H10Z" fill="url(#winterHills)" opacity=".72"/>
+              <g opacity=".85">
+                <path d="M255 226l25-49 26 49h-12l18 17h-64l18-17Z" fill="#7ab4b5"/><path d="M280 171v78" stroke="#608d9a" stroke-width="5"/>
+                <path d="M377 227l28-61 28 61h-13l20 21h-70l20-21Z" fill="#95c6c0"/><path d="M405 172v78" stroke="#729d9d" stroke-width="5"/>
+                <path d="M206 243l19-39 18 39h-9l12 11h-45l12-11Z" fill="#8cc0bd"/>
+              </g>
+              <g transform="translate(310 174)">
+                <path d="M0 37L38 5l38 32v44H0Z" fill="#e3e4dd" opacity=".88"/>
+                <path d="M-10 40L38-3l48 43" stroke="#f5d99b" stroke-width="7" stroke-linecap="round" fill="none"/>
+                <rect x="43" y="48" width="17" height="20" rx="3" fill="#ffde92" opacity=".82"/>
+                <rect x="15" y="51" width="18" height="30" rx="3" fill="#8b9ab2" opacity=".7"/>
+                <path d="M12 54h24M41 51h22" stroke="#fff7d9" stroke-width="1.5" opacity=".85"/>
+              </g>
+              <path d="M0 254q100-10 165-1t153-2 154 0v19H0Z" fill="#e8f0fc" opacity=".45"/>
+            </svg>
+          </div>
+          <div class="hero-scene hero-scene-tree">
+            <svg viewBox="0 0 460 270" preserveAspectRatio="xMidYMid meet" focusable="false">
+              <defs><radialGradient id="treeHalo"><stop stop-color="#ffe1a1" stop-opacity=".32"/><stop offset="1" stop-color="#ffe1a1" stop-opacity="0"/></radialGradient></defs>
+              <circle cx="328" cy="124" r="121" fill="url(#treeHalo)"/>
+              <g class="tree-sparkles" fill="#ffe6a6"><circle cx="190" cy="72" r="3"/><circle cx="404" cy="105" r="2"/><circle cx="424" cy="52" r="2"/><circle cx="234" cy="159" r="1.8"/></g>
+              <path d="M120 249Q225 233 329 249t158 0v30H120Z" fill="#b5d2ef" opacity=".38"/>
+              <rect x="313" y="212" width="20" height="39" rx="2" fill="#98705f"/>
+              <path d="M322 37L255 137h22l-46 77q86 18 176 0l-49-77h25Z" fill="#1d806d" opacity=".96"/>
+              <path d="M321 47l-59 91h24l-41 70q77 14 158 0l-47-70h24Z" fill="#299481" opacity=".85"/>
+              <path d="M322 43L276 120h21l-36 67q61 13 124 0l-37-67h21Z" fill="#48a394" opacity=".52"/>
+              <path d="M276 122q35 25 91 5M250 174q68 31 146 5M241 210q85 26 166 0" fill="none" stroke="#e9ce8e" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 7" opacity=".85"/>
+              <g class="tree-lights"><circle cx="298" cy="119" r="5" fill="#f9d888"/><circle cx="351" cy="133" r="5" fill="#f7a8b0"/><circle cx="283" cy="170" r="5" fill="#d5f1f5"/><circle cx="359" cy="188" r="5" fill="#ffd987"/><circle cx="321" cy="199" r="5" fill="#f7b6b8"/><circle cx="333" cy="156" r="4" fill="#e2ecff"/></g>
+              <path class="tree-top-star" d="M322 15l7 13 15 3-11 11 2 16-13-7-14 7 3-16-11-11 15-3Z" fill="#ffe4a2"/>
+              <g><rect x="236" y="220" width="48" height="32" rx="4" fill="#e8a5aa"/><rect x="254" y="218" width="10" height="35" fill="#f6dca2"/><rect x="231" y="229" width="56" height="8" fill="#f6dca2"/>
+                <rect x="371" y="225" width="46" height="28" rx="4" fill="#9bc6d2"/><rect x="390" y="223" width="9" height="30" fill="#f0e7c5"/><rect x="367" y="235" width="52" height="6" fill="#f0e7c5"/></g>
+            </svg>
+          </div>
+          <div class="hero-scene hero-scene-nativity">
+            <svg viewBox="0 0 460 270" preserveAspectRatio="xMidYMid meet" focusable="false">
+              <defs><radialGradient id="nativityHalo"><stop stop-color="#ffdca0" stop-opacity=".3"/><stop offset="1" stop-color="#ffdca0" stop-opacity="0"/></radialGradient></defs>
+              <circle cx="324" cy="117" r="128" fill="url(#nativityHalo)"/>
+              <g class="nativity-star" fill="#ffe8aa">
+                <path d="M322 12l6 18 19 5-19 6-6 17-6-17-18-6 18-5Z"/>
+                <path d="M322-3v14M322 59v13M289 35h-13M357 35h13M300 13l-9-9M346 57l10 10" fill="none" stroke="#ffe8aa" stroke-width="2" stroke-linecap="round" opacity=".65"/>
+              </g>
+              <path d="M152 105L321 55l121 59" fill="none" stroke="#e2c293" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>
+              <path d="M168 105v133M423 106v132" stroke="#d7c6ac" stroke-width="9" stroke-linecap="round" opacity=".65"/>
+              <path d="M172 239Q310 220 454 239v34H172Z" fill="#b4c3d3" opacity=".44"/>
+              <!-- Mary, with gentle blue robe -->
+              <circle cx="260" cy="146" r="18" fill="#f2d4b0"/>
+              <path d="M250 124Q219 137 218 191Q207 212 192 229Q237 239 286 231L296 187Q286 143 268 127Z" fill="#83b9cd"/>
+              <path d="M242 148q-9 20 11 30l25 16" stroke="#cde4e8" stroke-width="5" fill="none" stroke-linecap="round"/>
+              <!-- Joseph, simple pale cloak and staff -->
+              <path d="M367 118L382 234H314L327 163Z" fill="#e1c7a1"/>
+              <circle cx="349" cy="132" r="18" fill="#ebcca9"/>
+              <path d="M340 114q21-14 32 12l-8 18" fill="none" stroke="#9b7966" stroke-width="9" stroke-linecap="round"/>
+              <path d="M377 146l12 87" fill="none" stroke="#d9b481" stroke-width="5" stroke-linecap="round"/>
+              <!-- Baby Jesus in the manger -->
+              <path d="M266 214l10-26h53l11 26Z" fill="#b58865"/><path d="M270 194h62M277 210h49" stroke="#f2d8ae" stroke-width="5" stroke-linecap="round"/>
+              <ellipse cx="303" cy="184" rx="26" ry="14" fill="#f1dcb8"/><circle cx="291" cy="176" r="11" fill="#f6dfbd"/>
+              <path d="M300 177q12 0 20 13" stroke="#d3e4ec" stroke-width="9" stroke-linecap="round" fill="none"/>
+              <ellipse cx="302" cy="178" rx="50" ry="28" fill="none" stroke="#ffe3a1" stroke-opacity=".22" stroke-width="2"/>
+            </svg>
+          </div>
+        </div>
+        <div class="hero-content">
           <p class="eyebrow">CHRISTMAS FELLOWSHIP CELEBRATION</p>
-          <h1>Pasko ng Angkan <span>2026</span></h1>
+          <h1>Pasko ng Angkan <span class="hero-year">2026</span></h1>
           <p class="hero-sub">Sunday, December 13, 2026</p>
         </div>
         <div class="hero-star" aria-hidden="true">✦</div>
+        <div class="hero-snow" id="heroSnow" aria-hidden="true"></div>
       </section>
 
       <section id="summaryStrip" class="summary-grid" aria-label="Event summary">
@@ -239,5 +314,6 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="assets/js/api.js?v=2.7"></script>
   <script src="assets/js/app.js?v=2.7"></script>
+  <script src="assets/js/hero-animation.js?v=2.8" defer></script>
 </body>
 </html>

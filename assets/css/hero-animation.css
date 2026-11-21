@@ -1,0 +1,49 @@
+/* v2.8: decorative Christmas slideshow localized to the existing event banner.
+   The original gradient, title, date, and application components remain unchanged. */
+.hero-animated{isolation:isolate;min-height:183px;position:relative;overflow:hidden;background:linear-gradient(115deg,#172554,#25458b)}
+.hero-animated::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:radial-gradient(circle at 81% 35%,rgba(116,169,243,.18),transparent 46%)}
+.hero-animated::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;background:linear-gradient(90deg,rgba(23,37,84,.34),rgba(23,37,84,.06) 67%,transparent)}
+.hero-animated .hero-content{z-index:3;position:relative;max-width:87%;text-shadow:0 2px 10px rgba(7,18,43,.14)}
+.hero-animated .hero-content .eyebrow{color:#a7b9df}
+.hero-animated .hero-content h1{white-space:normal}
+.hero-animated .hero-year{position:relative;display:inline-block;color:#f8d98a}
+/* A very light snow dusting on the year; never masks the original lettering. */
+.hero-animated .hero-year::after{content:"";position:absolute;left:7%;right:7%;top:0;height:3px;border-radius:80% 35% 80% 35%;pointer-events:none;background:linear-gradient(90deg,transparent,#e9f5ff 18%,#fff 53%,#ecf6ff 82%,transparent);opacity:0;transform:translateY(-2px) scaleX(.4);filter:drop-shadow(0 1px 2px rgba(206,237,255,.6));animation:hero-year-dusting 24s ease-in-out infinite}
+.hero-animated .hero-star{position:absolute;right:11%;top:50%;transform:translateY(-50%);z-index:0;margin:0;color:rgba(255,255,255,.07);pointer-events:none}
+.hero-art{position:absolute;z-index:1;inset:0 0 0 auto;width:min(48%,500px);height:100%;pointer-events:none;opacity:.96;mask-image:linear-gradient(90deg,transparent,black 17%);-webkit-mask-image:linear-gradient(90deg,transparent,black 17%)}
+.hero-scene{position:absolute;inset:0;opacity:0;transform:translate3d(12px,5px,0) scale(.985);will-change:opacity,transform}
+.hero-scene svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
+.hero-scene-winter{animation:hero-winter-cycle 24s ease-in-out infinite}
+.hero-scene-tree{animation:hero-tree-cycle 24s ease-in-out infinite}
+.hero-scene-nativity{animation:hero-nativity-cycle 24s ease-in-out infinite}
+@keyframes hero-winter-cycle{0%,27%{opacity:1;transform:translate3d(0,0,0) scale(1)}33%,96%{opacity:0;transform:translate3d(-7px,4px,0) scale(.99)}100%{opacity:1;transform:translate3d(0,0,0) scale(1)}}
+@keyframes hero-tree-cycle{0%,28%{opacity:0;transform:translate3d(12px,5px,0) scale(.985)}34%,60%{opacity:1;transform:translate3d(0,0,0) scale(1)}66%,100%{opacity:0;transform:translate3d(-8px,3px,0) scale(.99)}}
+@keyframes hero-nativity-cycle{0%,61%{opacity:0;transform:translate3d(12px,5px,0) scale(.985)}67%,95%{opacity:1;transform:translate3d(0,0,0) scale(1)}100%{opacity:0;transform:translate3d(-5px,0,0) scale(.99)}}
+@keyframes hero-year-dusting{0%,8%{opacity:0;transform:translateY(-2px) scaleX(.4)}18%,30%{opacity:.82;transform:translateY(-2px) scaleX(1)}38%,100%{opacity:0;transform:translateY(-1px) scaleX(.87)}}
+.tree-top-star{transform-box:fill-box;transform-origin:center;animation:hero-star-glow 3.2s ease-in-out infinite}
+.tree-lights circle{animation:hero-light-twinkle 2.7s ease-in-out infinite alternate}
+.tree-lights circle:nth-child(2n){animation-delay:-1.2s}
+.tree-lights circle:nth-child(3n){animation-delay:-.5s}
+.tree-sparkles{animation:hero-star-glow 4s ease-in-out infinite}
+.nativity-star{animation:hero-star-glow 4s ease-in-out infinite}
+@keyframes hero-star-glow{0%,100%{opacity:.64;filter:drop-shadow(0 0 1px rgba(255,237,172,.55))}50%{opacity:1;filter:drop-shadow(0 0 9px rgba(255,220,130,.65))}}
+@keyframes hero-light-twinkle{0%{opacity:.55}100%{opacity:1;filter:drop-shadow(0 0 5px currentColor)}}
+.hero-snow{position:absolute;z-index:4;inset:0;overflow:hidden;pointer-events:none;contain:layout paint}
+.hero-flake{display:block;position:absolute;top:-14px;left:var(--flake-left);width:var(--flake-size);height:var(--flake-size);border-radius:50%;background:#f7fcff;opacity:var(--flake-opacity);box-shadow:0 0 4px rgba(235,248,255,.18);animation:hero-flake-fall var(--flake-duration) var(--flake-delay) linear infinite;will-change:transform}
+@keyframes hero-flake-fall{from{transform:translate3d(0,-10px,0)}to{transform:translate3d(var(--flake-drift),280px,0)}}
+.hero-motion-paused .hero-scene,.hero-motion-paused .hero-flake,.hero-motion-paused .hero-year::after,.hero-motion-paused .tree-lights circle,.hero-motion-paused .tree-sparkles,.hero-motion-paused .tree-top-star,.hero-motion-paused .nativity-star{animation-play-state:paused!important}
+@media(max-width:700px){
+  .hero-animated{min-height:191px}
+  .hero-animated .hero-content{max-width:93%;text-shadow:0 1px 11px rgba(6,18,46,.32)}
+  .hero-art{width:54%;opacity:.64;mask-image:linear-gradient(90deg,transparent,black 28%);-webkit-mask-image:linear-gradient(90deg,transparent,black 28%)}
+  .hero-animated::after{background:linear-gradient(90deg,rgba(23,37,84,.48),rgba(23,37,84,.22) 71%,transparent)}
+  .hero-snow{opacity:.7}
+}
+@media(max-width:380px){.hero-art{width:50%;opacity:.52}.hero-animated .hero-content{max-width:98%}}
+/* No distraction for visitors requesting reduced motion. Show a calm, static Nativity. */
+@media(prefers-reduced-motion:reduce){
+  .hero-animated .hero-scene,.hero-animated .hero-flake,.hero-animated .hero-year::after,.hero-animated .tree-lights circle,.hero-animated .tree-sparkles,.hero-animated .tree-top-star,.hero-animated .nativity-star{animation:none!important;transition:none!important}
+  .hero-animated .hero-scene{opacity:0!important;transform:none!important;will-change:auto}
+  .hero-animated .hero-scene-nativity{opacity:1!important}
+  .hero-animated .hero-year::after,.hero-animated .hero-flake{display:none!important}
+}
