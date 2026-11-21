@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.6 browser UI; compatible with v2.4 Apps Script API. */
+/* Pasko ng Angkan 2026 — v2.7 browser UI; compatible with v2.4 Apps Script API. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -92,7 +92,9 @@ const ICON_PATHS={
   switch:'<path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4"/>',
   logout:'<path d="M10 17l5-5-5-5m5 5H3M13 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
   activity:'<path d="M4 12h3l3-8 4 16 3-8h3"/>',
-  flag:'<path d="M4 21V4m0 1c5-3 8 3 16 0v11c-8 3-11-3-16 0"/>'
+  flag:'<path d="M4 21V4m0 1c5-3 8 3 16 0v11c-8 3-11-3-16 0"/>',
+  'sort-asc':'<path d="M4 6h10M4 11h7M4 16h4M18 5v14m-4-4 4 4 4-4"/>',
+  'sort-desc':'<path d="M4 6h4M4 11h7M4 16h10M18 19V5m-4 4 4-4 4 4"/>'
 };
 function icon(name){return `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICON_PATHS[name]||ICON_PATHS.check}</svg>`;}
 function iconAction(buttonClass,id,label,iconName,extraClass=""){
@@ -365,7 +367,11 @@ function bindEvents(){
     $("#mainMenu").classList.add("hidden");$("#mainMenuBtn").setAttribute("aria-expanded","false");
     openPeopleRoles();
   };
-  $("#peopleRolesSort").onchange=renderPeopleRoles;
+  $("#peopleRolesSort").onclick=()=>{
+    const sortButton=$("#peopleRolesSort");
+    setPeopleRolesSort(sortButton.dataset.sortOrder==="name-asc"?"name-desc":"name-asc");
+    renderPeopleRoles();
+  };
   $("#peopleRolesSearch").oninput=renderPeopleRoles;
   $("#copyPeopleRolesBtn").onclick=copyPeopleRoles;
   $("#copyAllCommitteesBtn").onclick=()=>{
@@ -493,13 +499,23 @@ function peopleRolesData(){
       .some(value=>String(value).toLocaleLowerCase().includes(query));
   });
   const collator=new Intl.Collator("en-PH",{numeric:true,sensitivity:"base"});
-  const reverse=$("#peopleRolesSort")?.value==="name-desc";
+  const reverse=$("#peopleRolesSort")?.dataset.sortOrder==="name-desc";
   filtered.sort((a,b)=>((reverse?-1:1)*collator.compare(a.name,b.name))||collator.compare(a.id,b.id));
   return {people:filtered,total:sorted.length};
 }
+function setPeopleRolesSort(order){
+  const button=$("#peopleRolesSort");
+  const descending=order==="name-desc";
+  button.dataset.sortOrder=descending?"name-desc":"name-asc";
+  button.setAttribute("aria-pressed",String(descending));
+  button.setAttribute("aria-label",descending?"Sorted by name Z to A. Click to sort A to Z":"Sorted by name A to Z. Click to sort Z to A");
+  button.title=descending?"Name Z–A · Click to reverse":"Name A–Z · Click to reverse";
+  // Icon automatically shows the current sort direction.
+  button.innerHTML=icon(descending?"sort-desc":"sort-asc");
+}
 function openPeopleRoles(){
   if(!state.user){toast("Sign in to view people and roles.");openLogin();return;}
-  $("#peopleRolesSort").value="name-asc";
+  setPeopleRolesSort("name-asc");
   $("#peopleRolesSearch").value="";
   renderPeopleRoles();
   if(!$("#peopleRolesDialog").open)$("#peopleRolesDialog").showModal();
@@ -519,7 +535,7 @@ function renderPeopleRoles(){
 }
 function buildPeopleRolesText(){
   const {people,total}=peopleRolesData();
-  const lines=["🎄 *PASKO NG ANGKAN 2026*","👥 *PEOPLE & ROLES DIRECTORY*",`👤 ${people.length} of ${total} active people · Sorted by name ${$("#peopleRolesSort").value==="name-desc"?"Z–A":"A–Z"}`];
+  const lines=["🎄 *PASKO NG ANGKAN 2026*","👥 *PEOPLE & ROLES DIRECTORY*",`👤 ${people.length} of ${total} active people · Sorted by name ${$("#peopleRolesSort").dataset.sortOrder==="name-desc"?"Z–A":"A–Z"}`];
   if(unsyncedCount())lines.push(`⚠️ ${unsyncedCount()} change(s) not yet confirmed by Google Sheets.`);
   people.forEach((p,i)=>{
     lines.push("",`${i+1}. *${p.name}*`, `Position: ${p.position||"Not listed"}`,`System role: ${p.accessRole}`);

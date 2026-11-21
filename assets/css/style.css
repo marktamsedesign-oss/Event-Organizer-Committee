@@ -167,7 +167,14 @@ html,body{touch-action:pan-x pan-y}
 
 
 /* v2.6 — alphabetically sortable, per-person Head/Support role directory. */
-.people-toolbar{display:grid;grid-template-columns:minmax(160px,.8fr) minmax(0,1.4fr);gap:11px;margin:15px 0 10px}
+.people-toolbar{display:flex;align-items:flex-end;gap:8px;margin:15px 0 10px}
+.people-search-field{flex:1;min-width:0}
+.people-search-field input{width:100%}
+.people-sort-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:42px;height:42px;min-width:42px;min-height:42px;padding:9px;border-radius:11px;border-color:#c5d5f5;background:#edf3ff;color:#244ca0}
+.people-sort-toggle:hover{background:#e0ebff;border-color:#9eb7eb}
+.people-sort-toggle .ui-icon{width:21px;height:21px}
+.people-sort-toggle[aria-pressed="true"]{color:#244ca0;background:#eaf0ff}
+
 .people-stats{padding:4px 0 10px}
 .people-roles-list{display:grid;gap:11px;max-height:min(54vh,540px);overflow-y:auto;overscroll-behavior:contain;padding:2px 3px 3px 0}
 .people-person-card{border:1px solid var(--line);background:#fff;border-radius:13px;padding:13px}
@@ -185,7 +192,6 @@ html,body{touch-action:pan-x pan-y}
 .people-copy-note{margin-top:12px;line-height:1.5}
 #peopleRolesDialog .modal-card{max-height:min(89vh,890px)}
 @media(max-width:540px){
-  .people-toolbar{grid-template-columns:1fr}
   .people-role-columns{grid-template-columns:1fr;gap:7px}
   .people-roles-list{max-height:min(48vh,470px)}
   .people-person-card{padding:11px}

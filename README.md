@@ -33,3 +33,8 @@ Mobile-friendly GitHub Pages frontend plus Google Apps Script/Google Sheets back
 Back up your spreadsheet and repository. **If you already deployed the working v2.4 backend**, no Apps Script change or spreadsheet migration is required: replace the GitHub frontend files and publish. If you are upgrading from an older version, follow the backend upgrade directions in [RELEASE-v2.4.md](RELEASE-v2.4.md) first. Confirm the `/exec` URL in `assets/js/api.js`. See [RELEASE-v2.6.md](RELEASE-v2.6.md) for instructions.
 
 **Data and security:** The shared group password is a convenience mechanism, not strong user authentication. Do not store sensitive personal or account data. Keep the live Google Sheet private; do not upload backups or exported records to the public GitHub repository.
+
+
+### v2.7 compact sort control
+
+People & roles summary now has an icon-only A–Z/Z–A toggle next to the search input. See `RELEASE-v2.7.md` for details.

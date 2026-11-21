@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#172554">
   <meta name="description" content="Pasko ng Angkan 2026 event management">
   <title>Pasko ng Angkan 2026</title>
-  <link rel="stylesheet" href="assets/css/style.css?v=2.6">
+  <link rel="stylesheet" href="assets/css/style.css?v=2.7">
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -203,15 +203,10 @@
         <button type="button" class="close-btn" data-close="peopleRolesDialog" aria-label="Close people and roles summary">×</button>
       </div>
       <div class="people-toolbar">
-        <label class="field"><span>Sort by name</span>
-          <select id="peopleRolesSort" aria-label="Sort people by name">
-            <option value="name-asc">Name A–Z</option>
-            <option value="name-desc">Name Z–A</option>
-          </select>
+        <label class="field people-search-field"><span class="people-search-label">Find a person or committee</span>
+          <input id="peopleRolesSearch" type="search" placeholder="Search people, roles, committees…" autocomplete="off">
         </label>
-        <label class="field"><span>Find a person or committee</span>
-          <input id="peopleRolesSearch" type="search" placeholder="Search names, roles, committees…" autocomplete="off">
-        </label>
+        <button id="peopleRolesSort" type="button" class="icon-btn people-sort-toggle" data-icon="sort-asc" data-sort-order="name-asc" aria-pressed="false" aria-label="Sorted by name A to Z. Click to sort Z to A" title="Name A–Z · Click to reverse" ></button>
       </div>
       <p id="peopleRolesStats" class="people-stats muted" role="status" aria-live="polite"></p>
       <div id="peopleRolesList" class="people-roles-list"></div>
@@ -242,7 +237,7 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="assets/js/api.js?v=2.6"></script>
-  <script src="assets/js/app.js?v=2.6"></script>
+  <script src="assets/js/api.js?v=2.7"></script>
+  <script src="assets/js/app.js?v=2.7"></script>
 </body>
 </html>
