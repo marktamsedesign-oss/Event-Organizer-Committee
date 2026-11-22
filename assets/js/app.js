@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.9.7 Finance scorecard ordering. */
+/* Pasko ng Angkan 2026 — v2.9.8 background sync + 30-minute refresh + receivables. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -355,17 +355,31 @@ function flushRegistrationBuffer(){
   updateSaveState();
   Promise.resolve().then(drainWrites);
 }
-function retryFailedRegistrationWrites({showToast=false}={}){
+// Retry ONLY unconfirmed edits, with their original request IDs. Never retry
+// confirmed records or create new requests while the app is idle.
+function retryFailedWrites({showToast=false,registrationOnly=false}={}){
   if(writing||!state.token||navigator.onLine===false)return false;
-  const retry=failedJobs.filter(j=>isRegistrationJob(j)&&j.userId===state.user?.id&&!j.permanentError);
+  const retry=failedJobs.filter(j=>j.userId===state.user?.id&&!j.permanentError&&
+    (!registrationOnly||isRegistrationJob(j)));
   if(!retry.length)return false;
   failedJobs=failedJobs.filter(j=>!retry.includes(j));
-  pendingWrites+=retry.reduce((n,j)=>n+jobWeight(j),0);
+  const count=retry.reduce((n,j)=>n+jobWeight(j),0);
+  pendingWrites+=count;
   writes.unshift(...retry);
-  persistOutbox();updateSaveState();markPendingRegistrations();renderRegistration();
-  if(showToast)toast(`Retrying ${retry.reduce((n,j)=>n+jobWeight(j),0)} registration(s)…`);
+  if(!persistOutbox()){
+    writes.splice(0,retry.length);
+    failedJobs.unshift(...retry);
+    pendingWrites-=count;
+    toast("Cannot store the retry queue on this device; no changes were discarded.");
+    updateSaveState();return false;
+  }
+  updateSaveState();markPendingRegistrations();renderRegistration();
+  if(showToast)toast(`Retrying ${count} unconfirmed change(s) in the background…`);
   Promise.resolve().then(drainWrites);
   return true;
+}
+function retryFailedRegistrationWrites(options={}){
+  return retryFailedWrites({...options,registrationOnly:true});
 }
 function persistOutbox(){
   try{
@@ -401,7 +415,56 @@ function restoreOutbox(){
 // Failed jobs keep their original requestId. Server-side WriteReceipts makes
 // a manual retry idempotent even if a prior confirmation was lost.
 let pendingWrites=0, writing=false, writes=[],failedJobs=[],inflightJob=null,changeVersion=0;
-let lastRefreshAt=0, refreshing=false;
+let lastRefreshAt=0, refreshing=false, refreshAfterWritesRequested=false;
+// v2.9.8: a full Sheets refresh after 30 minutes of inactivity between syncs.
+// Timers may be suspended by mobile browsers; overdue work is caught up when
+// the tab becomes visible. Successful refreshes reset the 30-minute clock.
+const PERIODIC_SYNC_MS=30*60*1000;
+let periodicSyncTimer=null, periodicSyncDueAt=0, periodicSyncRunning=false;
+function schedulePeriodicSync(){
+  periodicSyncDueAt=Date.now()+PERIODIC_SYNC_MS;
+  if(periodicSyncTimer!==null)clearTimeout(periodicSyncTimer);
+  periodicSyncTimer=setTimeout(periodicSync,PERIODIC_SYNC_MS);
+}
+async function periodicSync(){
+  if(periodicSyncRunning)return;
+  if(periodicSyncTimer!==null)clearTimeout(periodicSyncTimer);
+  periodicSyncTimer=null;
+  // The user may have switched apps or closed the phone screen. Do not drain
+  // battery in a hidden tab; catch up once it is visible again.
+  if(document.visibilityState!=="visible")return;
+  periodicSyncRunning=true;
+  try{
+    if(registrationBuffer.length)flushRegistrationBuffer();
+    if(pendingWrites||writing){
+      refreshAfterWritesRequested=true;
+      return;
+    }
+    if(failedJobs.length){
+      refreshAfterWritesRequested=true;
+      if(!retryFailedWrites()){
+        refreshAfterWritesRequested=false;
+        setConnection("Some edits still need Sync; confirmed records remain visible.");
+      }
+      return;
+    }
+    if(refreshing||navigator.onLine===false)return;
+    if(state.token){
+      await refreshLatest({includeBootstrap:true,silent:true});
+    }else{
+      await loadBootstrap({preserveView:true});
+      renderAll();
+    }
+  }catch(err){
+    // A failed periodic read must never replace confirmed local data.
+    setConnection("Showing saved view · 30-minute refresh delayed: "+String(err.message||err).slice(0,95));
+  }finally{
+    periodicSyncRunning=false;
+    // The successful refresh already scheduled the next run. For failures,
+    // schedule the next attempt in 30 minutes rather than retrying in a loop.
+    if(periodicSyncTimer===null)schedulePeriodicSync();
+  }
+}
 function unsyncedCount(){return pendingWrites+failedJobs.reduce((n,j)=>n+jobWeight(j),0);}
 function updateSaveState(){
   const el=$("#saveState"),btn=$("#syncRefreshBtn"),badge=$("#syncCount");
@@ -425,20 +488,29 @@ function queueWrite(action,payload,optimistic,{awaitConfirmation=false}={}){
   if(!state.token){toast("Sign in to make changes.");return awaitConfirmation?Promise.reject(new Error("Please sign in.")):false;}
   const token=state.token;
   const requestId="req_"+Date.now()+"_"+Math.random().toString(36).slice(2,10);
-  changeVersion++;
-  if(optimistic)optimistic();
-  pendingWrites++;
   let done,resolve,reject;
   if(awaitConfirmation)done=new Promise((ok,fail)=>{resolve=ok;reject=fail});
-  writes.push({action,payload,token,requestId,userId:state.user.id,resolve,reject});
-  persistOutbox();
+  const job={action,payload,token,requestId,userId:state.user.id,resolve,reject};
+  // Write-ahead persistence: do not display an optimistic edit unless it can
+  // first be recovered after a reload or lost connection.
+  writes.push(job);
+  pendingWrites++;
+  if(!persistOutbox()){
+    writes.pop();pendingWrites--;
+    const error=new Error("Cannot store unsynced changes in this browser. Enable site storage and try again.");
+    toast(error.message);updateSaveState();
+    return awaitConfirmation?Promise.reject(error):false;
+  }
+  changeVersion++;
+  if(optimistic)optimistic();
   updateSaveState();renderAll();
   Promise.resolve().then(drainWrites);
   return awaitConfirmation?done:true;
 }
 async function drainWrites(){
-  if(writing)return;
+  if(writing||!writes.length)return;
   writing=true;
+  let storageBlocked=false;
   try{
     while(writes.length){
       const job=writes.shift();
@@ -446,6 +518,7 @@ async function drainWrites(){
       if(!persistOutbox()){
         inflightJob=null;writes.unshift(job);
         toast("Browser storage unavailable. Changes remain queued; enable site storage before syncing.");
+        storageBlocked=true;
         break;
       }
       try{
@@ -502,12 +575,18 @@ async function drainWrites(){
     }
   }finally{
     writing=false;
-    // Keep all optimistic edits visible while any write confirmation is missing.
-    if(!failedJobs.length&&state.token){
-      await refreshLatest({silent:true}).catch(err=>setConnection("Saved, refresh delayed: "+err.message));
+    // One confirmed refresh AFTER the whole edit burst, never after each edit.
+    // A manual refresh pressed during saving is honored after the writes finish.
+    // Unconfirmed edits are never overwritten with older server snapshots.
+    if(!writes.length&&!failedJobs.length&&!registrationBuffer.length&&state.token){
+      const includeBootstrap=refreshAfterWritesRequested;
+      refreshAfterWritesRequested=false;
+      await refreshLatest({includeBootstrap,silent:!includeBootstrap})
+        .catch(err=>setConnection("Saved, refresh delayed: "+err.message));
     }
     updateSaveState();
-    if(writes.length)Promise.resolve().then(drainWrites);
+    // Do not spin endlessly when browser storage is disabled.
+    if(writes.length&&!storageBlocked)Promise.resolve().then(drainWrites);
   }
 }
 function allowNavigation(){if(unsyncedCount()){toast("Unsynced changes remain. Sync & Refresh before leaving.");return false}return true;}
@@ -529,24 +608,22 @@ async function refreshLatest({includeBootstrap=false,silent=false}={}){
 async function manualSyncRefresh(){
   if(refreshing){toast("Already refreshing; your current view is staying open.");return;}
   if(registrationBuffer.length)flushRegistrationBuffer();
-  if(pendingWrites||writing){toast("Queued registrations are syncing in the background. You can keep registering.");return;}
+  if(pendingWrites||writing){
+    refreshAfterWritesRequested=true;
+    toast("Saving in the background. Latest records will refresh when pending writes finish.");
+    return;
+  }
   if(failedJobs.length){
-    const retry=failedJobs.splice(0);
-    pendingWrites+=retry.reduce((n,j)=>n+jobWeight(j),0);
-    writes.unshift(...retry);
-    persistOutbox();updateSaveState();
-    toast(`Retrying ${retry.reduce((n,j)=>n+jobWeight(j),0)} change(s) and refreshing afterward…`);
-    Promise.resolve().then(drainWrites);
+    refreshAfterWritesRequested=true;
+    if(retryFailedWrites({showToast:true}))return;
+    refreshAfterWritesRequested=false;
+    toast("Some changes need attention before a refresh can safely replace the current view.");
     return;
   }
   try{
     if(state.token)await refreshLatest({includeBootstrap:true});
-    else{await loadBootstrap({preserveView:true});renderAll();toast("Latest committee directory loaded. Sign in for full details.")}
+    else{await loadBootstrap({preserveView:true});schedulePeriodicSync();renderAll();toast("Latest committee directory loaded. Sign in for full details.")}
   }catch{/* The existing view remains available; error is shown by refreshLatest. */}
-}
-function backgroundRefresh(){
-  if(!state.token||unsyncedCount()||writing||refreshing||document.visibilityState!=="visible"||$("#editDialog").open)return;
-  refreshLatest({silent:true}).catch(err=>setConnection("Showing existing view · refresh delayed: "+err.message));
 }
 
 async function init(){
@@ -554,16 +631,19 @@ async function init(){
   bindEvents();
   preventAccidentalZoom();
   updateSaveState();
-  setInterval(()=>{
-    if(registrationBuffer.length&&!registrationFlushTimer)flushRegistrationBuffer();
-    if(failedJobs.some(isRegistrationJob))retryFailedRegistrationWrites();
-    if(Date.now()-lastRefreshAt>30000)backgroundRefresh();
-  },60000);
+  // No frequent background polling: one refresh per 30 minutes after the
+  // last successful sync, plus edits, manual Sync and page reload.
+  schedulePeriodicSync();
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState==="visible"&&Date.now()>=periodicSyncDueAt)
+      periodicSync();
+  });
   window.addEventListener("online",()=>{
     if(registrationBuffer.length)flushRegistrationBuffer();
-    retryFailedRegistrationWrites({showToast:true});
+    retryFailedWrites({showToast:true});
+    if(document.visibilityState==="visible"&&Date.now()>=periodicSyncDueAt)
+      periodicSync();
   });
-  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&Date.now()-lastRefreshAt>30000)backgroundRefresh()});
   window.addEventListener("beforeunload",event=>{if(unsyncedCount()){event.preventDefault();event.returnValue=""}});
   let showedCache=false;
   const stored=sessionGet();
@@ -592,7 +672,7 @@ async function init(){
         // registrations, then overlay queued entries so nothing disappears.
         await verifiedRefreshWithRetry(3,{allowPending:true});
         if(registrationBuffer.length)scheduleRegistrationFlush(500);
-        if(failedJobs.some(isRegistrationJob))setTimeout(()=>retryFailedRegistrationWrites(),1200);
+        if(failedJobs.some(j=>!j.permanentError))setTimeout(()=>retryFailedWrites(),1200);
         return;
       }
       await verifiedRefreshWithRetry();return;
@@ -698,6 +778,7 @@ async function refreshData({allowPending=false}={}){
   state.registrations.forEach(r=>r._everConfirmed=true);
   setVerifiedDirectory({users:result.users,committees:result.committees,members:result.members});
   lastRefreshAt=Date.now();
+  schedulePeriodicSync();
   fullSnapshotLoaded=true;directoryLoading=false;directoryError="";
   // Never cache unconfirmed optimistic records as confirmed sheet data.
   if(allowPending&&unsyncedCount())markPendingRegistrations();
@@ -1071,7 +1152,7 @@ function renderSummary(){
   const definitions={
     committees:[["Committees",state.committees.length],["Total tasks",tasks.length],["Completed",done],["Needs attention",tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length]],
     tasks:[["Total tasks",tasks.length],["Completed",done],["Pending",tasks.filter(t=>t.status==="Pending").length],["Blocked",tasks.filter(t=>t.status==="Blocked").length]],
-    finance:[["Total Funds",finance?money(finance.totalFunds):"—"],["Cash Available",finance?money(finance.availableCash):"—"],["Collections",finance?money(finance.collection):"—"],["Expenses",finance?money(finance.expenses):"—"],["Payables",finance?money(finance.payables):"—"]],
+    finance:[["Total Funds",finance?money(finance.totalFunds):"—"],["Cash Available",finance?money(finance.availableCash):"—"],["Receivables",finance?money(finance.outstanding):"—"],["Expenses",finance?money(finance.expenses):"—"],["Payables",finance?money(finance.payables):"—"]],
     food:[["Food items",state.foodItems.length],["Ready",foodDone],["To do",state.foodItems.length-foodDone],["Progress",state.foodItems.length?Math.round(foodDone*100/state.foodItems.length)+"%":"0%"]],
     registration:[["Registrations",registration.length],["Attendees",registration.reduce((n,r)=>n+(Number(r.attendeeCount)||1),0)],["Still due",finance?money(finance.registrationOutstanding):"—"],["Collected",finance?money(finance.registrationCollected):"—"]],
     reports:[["Committees",state.committees.length],["Overall progress",tasks.length?Math.round(done*100/tasks.length)+"%":"0%"],["Completed",done],["Needs attention",tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length]]
@@ -1737,7 +1818,8 @@ function saveEditor(ev){
     case "addUser":payload={user:data};optimistic=null;break;
     default:$("#editError").textContent="Unsupported form action.";return;
   }
-  queueWrite(action,payload,optimistic);
+  const queued=queueWrite(action,payload,optimistic);
+  if(queued===false){$("#editError").textContent="This edit was not queued. Enable browser storage and try again.";return;}
   $("#editDialog").close();
   if(action==="saveMember"&&state.managingCommitteeId&&canManageMembers(state.managingCommitteeId))openMembers(state.managingCommitteeId);
   toast(action==="receiveFinance"?"Recording receipt in Google Sheets. It counts as collected only after confirmation…":"Updated instantly. Saving to Google Sheets in background…");
