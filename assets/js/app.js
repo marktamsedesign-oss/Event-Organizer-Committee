@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.9.3 verified directory loading and persistent last-good snapshot. */
+/* Pasko ng Angkan 2026 — v2.9.4 independent people directory loading + diagnostics. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -18,17 +18,57 @@ function sessionClear(){try{localStorage.removeItem("pna_session")}catch{/* alre
 // incomplete responses are never allowed to replace it. This cache includes
 // participant names: use Sign out on a shared device to clear the local copy.
 const SNAPSHOT_KEY="pna_confirmed_snapshot_v293";
+const DIRECTORY_KEY="pna_verified_directory_v294";
 const LEGACY_SNAPSHOT_KEY="pna_confirmed_snapshot_v24";
 const TAB_KEY="pna_active_tab_v24";
 const SNAPSHOT_MAX_AGE_MS=7*24*3600*1000;
 let lastConfirmedAt=0,fullSnapshotLoaded=false,directoryLoading=true,directoryError="",directoryFetchPromise=null;
+// People & Roles is a separate, lightweight verified data set. A stalled
+// getData() (which reads every sheet) must never prevent showing this directory.
+let verifiedDirectory=null;
+function hasValidDirectory(data,userId=state.user?.id){
+  return !!(data&&Array.isArray(data.users)&&data.users.length>0&&
+    Array.isArray(data.committees)&&Array.isArray(data.members)&&
+    (!userId||data.users.some(u=>String(u.id)===String(userId)))&&
+    data.users.every(u=>u&&typeof u.id==="string"&&String(u.name||"").trim()));
+}
+function setVerifiedDirectory(data,{persist=true}={}){
+  if(!hasValidDirectory(data))throw new Error("People directory missing the signed-in user or expected lists.");
+  // getData() in v2.9.3 returns only active people, but its projection does
+  // NOT include the `active` field. Normalize that missing field to true.
+  // Do not normalize an explicit false value (an inactive user).
+  const users=data.users.map(u=>({...u,active:u.active===undefined?true:u.active}));
+  verifiedDirectory={users,committees:data.committees,members:data.members,savedAt:Date.now()};
+  directoryLoading=false;directoryError="";
+  if(persist){try{localStorage.setItem(DIRECTORY_KEY,JSON.stringify({userId:state.user?.id||"",...verifiedDirectory}))}catch{}}
+  // bootstrap is the login directory and is independent of full task/finance data.
+  state.bootstrap={...state.bootstrap,...data,ok:true,apiVersion:29,event:data.event||state.bootstrap?.event,
+    users,committees:data.committees,members:data.members};
+  if(!fullSnapshotLoaded){state.committees=data.committees;state.members=data.members;}
+  renderLoginUsers();
+  if($("#peopleRolesDialog")?.open)renderPeopleRoles();
+}
+function restoreDirectory(userId){
+  if(verifiedDirectory&&hasValidDirectory(verifiedDirectory,userId))return true;
+  try{
+    const raw=localStorage.getItem(DIRECTORY_KEY);
+    if(!raw)return false;
+    const saved=JSON.parse(raw);
+    if(saved.userId!==userId||!Number.isFinite(saved.savedAt)||
+       Date.now()-saved.savedAt<0||Date.now()-saved.savedAt>SNAPSHOT_MAX_AGE_MS||
+       !hasValidDirectory(saved,userId))return false;
+    setVerifiedDirectory(saved,{persist:false});
+    return true;
+  }catch{return false;}
+}
+
 function readTab(){try{return sessionStorage.getItem(TAB_KEY)||"committees"}catch{return "committees"}}
 function cacheTab(tab){try{sessionStorage.setItem(TAB_KEY,tab)}catch{}}
 function clearSnapshot(){
   for(const store of [localStorage,sessionStorage]){
-    for(const key of [SNAPSHOT_KEY,LEGACY_SNAPSHOT_KEY])try{store.removeItem(key)}catch{}
+    for(const key of [SNAPSHOT_KEY,LEGACY_SNAPSHOT_KEY,DIRECTORY_KEY])try{store.removeItem(key)}catch{}
   }
-  fullSnapshotLoaded=false;
+  fullSnapshotLoaded=false;verifiedDirectory=null;
 }
 function restoreSnapshot(userId){
   try{
@@ -48,7 +88,7 @@ function restoreSnapshot(userId){
     ["committees","members","tasks","updates","finance","foodItems","registrations","activity","archivedCommittees"].forEach(field=>state[field]=snap[field]);
     const tab=readTab();state.activeTab=["committees","tasks","finance","food","registration","reports"].includes(tab)?tab:"committees";
     lastConfirmedAt=snap.savedAt;fullSnapshotLoaded=true;directoryLoading=false;directoryError="";
-    renderLoginUsers();
+    setVerifiedDirectory({users:snap.bootstrap.users,committees:snap.committees,members:snap.members},{persist:false});
     return true;
   }catch{return false}
 }
@@ -504,10 +544,11 @@ async function init(){
       if(sess.user&&sess.token){
         state.user=sess.user;state.token=sess.token;
         showedCache=restoreSnapshot(state.user.id);
+        const hasPeople=restoreDirectory(state.user.id);
         restoreOutbox();
-        if(showedCache){
+        if(showedCache||hasPeople){
           renderAll();
-          setConnection("Showing last confirmed view · checking Google Sheets…");
+          setConnection(showedCache?"Showing last confirmed view · checking Google Sheets…":"People directory restored · loading other records…");
         }
       }
     }catch{clearSession()}
@@ -532,13 +573,17 @@ async function init(){
     if(/SESSION_INVALID/.test(err.message)){
       clearSession();renderAll();openLogin();toast("This device needs a new sign-in.");return;
     }
-    if(showedCache&&state.token){
-      setConnection("Showing last confirmed view · Google Sheets unavailable");
-      toast("Cannot load latest records; your previous view remains available.");
+    if((showedCache||verifiedDirectory)&&state.token){
+      directoryLoading=false;
+      // Other collections may fail while the independent people directory works.
+      const detail=String(err?.message||"Unable to load event records");
+      setConnection("People available · tasks/other records need sync: "+detail.slice(0,115));
+      if($("#peopleRolesDialog")?.open)renderPeopleRoles();
+      toast("People loaded; other records could not be refreshed. Press Sync to retry.");
       return;
     }
     directoryLoading=false;directoryError=String(err?.message||"Unable to load event records");
-    setConnection("Cannot load complete event records · tap Sync to retry");
+    setConnection("Cannot load directory: "+directoryError.slice(0,130));
     if(!state.token)renderConnectionError(err.message);
     if($("#peopleRolesDialog")?.open)renderPeopleRoles();
     toast("Some records are unavailable. Your last confirmed view was not replaced.");
@@ -548,18 +593,19 @@ async function loadBootstrap({preserveView=false}={}){
   const result=await Api.request("bootstrap");
   if(!result?.ok)throw new Error(result?.error||"Database setup failed");
   assertApiV29(result);
-  // A partially populated bootstrap must never wipe a last-good directory.
-  if(result.directoryContract!==293||!Array.isArray(result.users)||!Array.isArray(result.committees)||
-     !Array.isArray(result.members)||!Number.isSafeInteger(result.directoryCount)||
-     result.directoryCount!==result.users.length)
-    throw new Error("Incomplete directory response. Deploy the v2.9.3 Code.gs backend.");
-  if(state.token && (!result.users.length||!result.users.some(u=>u.id===state.user?.id)))
-    throw new Error("Directory was unexpectedly empty; keeping the last confirmed people list.");
-  state.bootstrap=result;
-  // Never clear or repaint the currently visible committee data during fetch.
-  if(!state.token&&!preserveView){state.committees=result.committees;state.members=result.members;}
-  renderLoginUsers();
+  if(!hasValidDirectory(result))
+    throw new Error("Bootstrap returned no valid active-user directory. Check the Apps Script deployment and Users sheet.");
+  // v2.9.3 has an explicit count contract. A legacy v2.9.2 backend may not
+  // have that contract, but a valid nonempty bootstrap directory can still be
+  // displayed while the full-sheet API is diagnosed independently.
+  if(result.directoryContract===293&&(!Number.isSafeInteger(result.directoryCount)||
+     result.directoryCount!==result.users.length))
+    throw new Error("Incomplete directory response: user count mismatch.");
+  setVerifiedDirectory(result);
+  if(!preserveView&&!state.token&&!fullSnapshotLoaded)renderAll();
+  return true;
 }
+
 function renderLoginUsers(){
   const select=$("#loginUser"),previous=select.value;
   select.innerHTML=(state.bootstrap?.users||[]).filter(u=>active(u.active)).map(u=>`<option value="${esc(u.id)}">${esc(u.name)} · ${esc(u.position||u.accessRole)}</option>`).join("");
@@ -617,11 +663,7 @@ async function refreshData({allowPending=false}={}){
   const fields=["committees","members","tasks","updates","activity","finance","foodItems","registrations","archivedCommittees"];
   for(const field of fields)state[field]=result[field];
   state.registrations.forEach(r=>r._everConfirmed=true);
-  if(state.bootstrap){
-    state.bootstrap.members=state.members;state.bootstrap.committees=state.committees;
-    state.bootstrap.users=result.users;
-    renderLoginUsers();
-  }
+  setVerifiedDirectory({users:result.users,committees:result.committees,members:result.members});
   lastRefreshAt=Date.now();
   fullSnapshotLoaded=true;directoryLoading=false;directoryError="";
   // Never cache unconfirmed optimistic records as confirmed sheet data.
@@ -791,9 +833,11 @@ function renderAll(){
 // Event-wide directory: one person per card, Head and Support assignments grouped
 // separately. Reuses current bootstrap/users + membership records; no extra reads.
 function peopleRolesData(){
-  const committeeIds=new Set(state.committees.map(c=>c.id));
-  const sorted=(state.bootstrap?.users||[]).filter(u=>active(u.active)).map(u=>{
-    const memberships=state.members.filter(m=>active(m.active)&&m.userId===u.id&&committeeIds.has(m.committeeId));
+  const source=verifiedDirectory||{users:state.bootstrap?.users||[],members:state.members,committees:state.committees};
+  const directoryIds=new Set(source.committees.map(c=>c.id));
+  // Backwards compatible with v2.9.3 getData() user objects that omit active.
+  const sorted=source.users.filter(u=>u.active===undefined||active(u.active)).map(u=>{
+    const memberships=source.members.filter(m=>active(m.active)&&m.userId===u.id&&directoryIds.has(m.committeeId));
     const grouped={Head:[],Support:[]};
     // Legacy data can contain duplicate rows; show each unique role once.
     const seen=new Set();
@@ -803,7 +847,7 @@ function peopleRolesData(){
       const key=[m.committeeId,role,responsibility].join("|");
       if(seen.has(key))return;
       seen.add(key);
-      grouped[role].push({committeeId:m.committeeId,committee:committeeName(m.committeeId),responsibility});
+      grouped[role].push({committeeId:m.committeeId,committee:source.committees.find(c=>c.id===m.committeeId)?.name||committeeName(m.committeeId),responsibility});
     });
     const collator=new Intl.Collator("en-PH",{numeric:true,sensitivity:"base"});
     Object.values(grouped).forEach(assignments=>assignments.sort((a,b)=>collator.compare(a.committee,b.committee)||collator.compare(a.responsibility,b.responsibility)));
@@ -836,16 +880,23 @@ function openPeopleRoles(){
   $("#peopleRolesSearch").value="";
   renderPeopleRoles();
   if(!$("#peopleRolesDialog").open)$("#peopleRolesDialog").showModal();
+  if(!verifiedDirectory&&!directoryFetchPromise&&!directoryLoading)
+    retryPeopleRolesLoad();
 }
 async function retryPeopleRolesLoad(){
   if(directoryFetchPromise)return directoryFetchPromise;
-  directoryLoading=true;directoryError="";renderPeopleRoles();
+  directoryLoading=!verifiedDirectory;directoryError="";renderPeopleRoles();
   directoryFetchPromise=(async()=>{
+    // Only the lightweight bootstrap endpoint is necessary for People & Roles.
+    // Do not block this view behind the expensive getData() call.
     await loadBootstrap({preserveView:fullSnapshotLoaded});
-    await verifiedRefreshWithRetry(3,{allowPending:unsyncedCount()>0});
+    if(state.token&&!refreshing&&!unsyncedCount())
+      verifiedRefreshWithRetry(1).catch(err=>{
+        setConnection("People loaded · other sheets need sync: "+String(err.message).slice(0,110));
+      });
   })().catch(err=>{
     directoryError=String(err?.message||"Could not load the directory.");
-    setConnection("Directory not refreshed · previous confirmed data retained");
+    setConnection("Directory not refreshed: "+directoryError.slice(0,130));
   }).finally(()=>{
     directoryLoading=false;directoryFetchPromise=null;renderPeopleRoles();
   });
@@ -858,13 +909,13 @@ function describeResponsibility(a){return a.committee+(a.responsibility?` — ${
 function renderPeopleRoles(){
   const host=$("#peopleRolesList");
   if(!state.user){host.innerHTML='<div class="empty-state">Sign in to view people and roles.</div>';return;}
-  if(!fullSnapshotLoaded){
+  if(!verifiedDirectory){
     const isLoading=directoryLoading;
     $("#peopleRolesStats").textContent=isLoading?"Loading people and assignments…":"Directory is not available yet";
     host.innerHTML=`<div class="empty-state directory-loading" role="status">
       ${isLoading?'<span class="form-busy-spinner" aria-hidden="true"></span>':''}
       <strong>${isLoading?"Loading people & roles…":"People & roles not loaded"}</strong>
-      <p class="muted">${isLoading?"Checking the complete Google Sheets records. Your data has not been cleared.":esc(directoryError||"The server did not return a complete directory. Your previous records were not overwritten.")}</p>
+      <p class="muted">${isLoading?"Fetching the People directory from Apps Script…":esc(directoryError||"The directory request failed. Check your Apps Script deployment and use Retry.")}</p>
       ${isLoading?'':'<button type="button" class="small-btn" id="retryPeopleRolesBtn">Retry loading</button>'}
     </div>`;
     $("#copyPeopleRolesBtn").disabled=true;
@@ -872,12 +923,12 @@ function renderPeopleRoles(){
     return;
   }
   const {people,total}=peopleRolesData();
-  $("#peopleRolesStats").textContent=`${people.length} of ${total} people · A–Z/Z–A sorting · committee roles & assigned tasks`;
+  $("#peopleRolesStats").textContent=`${people.length} of ${total} people · Name sorting · ${fullSnapshotLoaded?"roles & tasks":"roles loaded; tasks still syncing"}`;
   host.innerHTML=people.length?people.map((p,index)=>{
     const assigned=personTasks(p.id),done=assigned.filter(t=>t.status==="Completed").length;
     const roles=[...p.heads.map(a=>`<li>👤 <b>Head</b> · ${esc(describeResponsibility(a))}</li>`),...p.support.map(a=>`<li>🤝 <b>Support</b> · ${esc(describeResponsibility(a))}</li>`)].join("");
     const needs=assigned.filter(t=>t.status!=="Completed").slice(0,3).map(t=>`<li>${esc(t.title)} · ${esc(committeeName(t.committeeId))}${t.dueDate?` · Due ${esc(shortDate(t.dueDate))}`:""}</li>`).join("");
-    return `<article class="people-person-card"><div class="people-person-heading"><span class="people-person-number">${index+1}</span><div><h3>${esc(p.name)}</h3><p class="muted">${p.heads.length} Head · ${p.support.length} Support · ${done}/${assigned.length} tasks complete</p></div></div><ul class="people-compact-roles">${roles||'<li>No committee assignment yet</li>'}</ul>${assigned.length?`<div class="people-task-mini"><strong>To do (${assigned.length-done})</strong>${needs?`<ul>${needs}</ul>`:" · All assigned tasks done"}</div>`:""}</article>`;
+    return `<article class="people-person-card"><div class="people-person-heading"><span class="people-person-number">${index+1}</span><div><h3>${esc(p.name)}</h3><p class="muted">${p.heads.length} Head · ${p.support.length} Support${fullSnapshotLoaded?` · ${done}/${assigned.length} tasks complete`:" · tasks syncing"}</p></div></div><ul class="people-compact-roles">${roles||'<li>No committee assignment yet</li>'}</ul>${assigned.length?`<div class="people-task-mini"><strong>To do (${assigned.length-done})</strong>${needs?`<ul>${needs}</ul>`:" · All assigned tasks done"}</div>`:""}</article>`;
   }).join(""):'<div class="empty-state"><strong>No matching people</strong>Try a different name, role, or committee.</div>';
   $("#copyPeopleRolesBtn").disabled=!people.length;
 }
