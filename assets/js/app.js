@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.9.2 fast batch registration & durable background sync. */
+/* Pasko ng Angkan 2026 — v2.9.3 verified directory loading and persistent last-good snapshot. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -14,40 +14,61 @@ function sessionGet(){try{return localStorage.getItem("pna_session")}catch{retur
 function sessionSet(data){try{localStorage.setItem("pna_session",JSON.stringify(data))}catch{/* session lasts until tab closes */}}
 function sessionClear(){try{localStorage.removeItem("pna_session")}catch{/* already unavailable */}}
 
-// Only last-confirmed records are cached, in this browser tab. Passwords and
-// unconfirmed edits never enter the snapshot. The cache is not an offline write store.
-const SNAPSHOT_KEY="pna_confirmed_snapshot_v24";
+// The last *verified* read is kept across reloads in this browser. New or
+// incomplete responses are never allowed to replace it. This cache includes
+// participant names: use Sign out on a shared device to clear the local copy.
+const SNAPSHOT_KEY="pna_confirmed_snapshot_v293";
+const LEGACY_SNAPSHOT_KEY="pna_confirmed_snapshot_v24";
 const TAB_KEY="pna_active_tab_v24";
-let lastConfirmedAt=0;
+const SNAPSHOT_MAX_AGE_MS=7*24*3600*1000;
+let lastConfirmedAt=0,fullSnapshotLoaded=false,directoryLoading=true,directoryError="",directoryFetchPromise=null;
 function readTab(){try{return sessionStorage.getItem(TAB_KEY)||"committees"}catch{return "committees"}}
 function cacheTab(tab){try{sessionStorage.setItem(TAB_KEY,tab)}catch{}}
-function clearSnapshot(){try{sessionStorage.removeItem(SNAPSHOT_KEY)}catch{}}
+function clearSnapshot(){
+  for(const store of [localStorage,sessionStorage]){
+    for(const key of [SNAPSHOT_KEY,LEGACY_SNAPSHOT_KEY])try{store.removeItem(key)}catch{}
+  }
+  fullSnapshotLoaded=false;
+}
 function restoreSnapshot(userId){
   try{
-    const snap=JSON.parse(sessionStorage.getItem(SNAPSHOT_KEY)||"null");
-    // Cached data is short lived and tied to the currently signed-in identity.
-    if(!snap||snap.userId!==userId||!snap.savedAt||Date.now()-snap.savedAt>12*3600*1000)return false;
-    if(!snap.bootstrap||!Array.isArray(snap.committees)||!Array.isArray(snap.tasks)||!Array.isArray(snap.registrations))return false;
+    const snapshots=[];
+    for(const store of [localStorage,sessionStorage])for(const key of [SNAPSHOT_KEY,LEGACY_SNAPSHOT_KEY]){
+      try{const raw=store.getItem(key);if(raw)snapshots.push(JSON.parse(raw))}catch{}
+    }
+    snapshots.sort((a,b)=>Number(b?.savedAt||0)-Number(a?.savedAt||0));
+    const snap=snapshots.find(item=>item&&item.userId===userId&&item.savedAt&&
+      Date.now()-item.savedAt>=0&&Date.now()-item.savedAt<SNAPSHOT_MAX_AGE_MS&&
+      item.bootstrap&&Array.isArray(item.bootstrap.users)&&item.bootstrap.users.length>0&&
+      item.bootstrap.users.some(u=>u.id===userId)&&
+      ["committees","members","tasks","updates","finance","foodItems","registrations","activity","archivedCommittees"]
+        .every(field=>Array.isArray(item[field])));
+    if(!snap)return false;
     state.bootstrap=snap.bootstrap;
-    ["committees","members","tasks","updates","finance","foodItems","registrations","activity","archivedCommittees"].forEach(key=>{
-      state[key]=Array.isArray(snap[key])?snap[key]:[];
-    });
+    ["committees","members","tasks","updates","finance","foodItems","registrations","activity","archivedCommittees"].forEach(field=>state[field]=snap[field]);
     const tab=readTab();state.activeTab=["committees","tasks","finance","food","registration","reports"].includes(tab)?tab:"committees";
-    lastConfirmedAt=snap.savedAt;
+    lastConfirmedAt=snap.savedAt;fullSnapshotLoaded=true;directoryLoading=false;directoryError="";
     renderLoginUsers();
     return true;
   }catch{return false}
 }
 function saveConfirmedSnapshot(){
-  if(!state.user||!state.bootstrap)return;
+  if(!state.user||!state.bootstrap||!fullSnapshotLoaded||
+     !Array.isArray(state.bootstrap.users)||!state.bootstrap.users.some(u=>u.id===state.user.id))return;
   lastConfirmedAt=Date.now();
-  try{sessionStorage.setItem(SNAPSHOT_KEY,JSON.stringify({
+  const snapshot={
     userId:state.user.id,savedAt:lastConfirmedAt,
     bootstrap:{ok:true,apiVersion:29,event:state.bootstrap.event,users:state.bootstrap.users,committees:state.committees,members:state.members},
     committees:state.committees,members:state.members,tasks:state.tasks,updates:state.updates,
     finance:state.finance,foodItems:state.foodItems,registrations:state.registrations,activity:state.activity,
     archivedCommittees:state.archivedCommittees
-  }))}catch{/* Storage may be unavailable or limited; live view still works. */}
+  };
+  try{localStorage.setItem(SNAPSHOT_KEY,JSON.stringify(snapshot))}
+  catch{
+    // Storage quotas or privacy settings may block persistence. Fall back to
+    // current-tab protection without claiming offline persistence.
+    try{sessionStorage.setItem(SNAPSHOT_KEY,JSON.stringify(snapshot))}catch{}
+  }
 }
 // Browser accessibility and OS-level zoom are outside page control. Block only
 // common inadvertent in-page mouse, key and touch gestures.
@@ -174,6 +195,7 @@ function clearSession(){
   state.user=null;state.token=null;sessionClear();clearSnapshot();
   state.bootstrap=null;state.committees=[];state.members=[];state.tasks=[];state.updates=[];
   state.finance=[];state.foodItems=[];state.registrations=[];state.activity=[];state.archivedCommittees=[];
+  directoryLoading=false;directoryError="";
   // Never discard pending registration data when authentication changes. The
   // queue stays tied to its original user in localStorage until confirmed.
   updateSaveState();
@@ -515,8 +537,10 @@ async function init(){
       toast("Cannot load latest records; your previous view remains available.");
       return;
     }
+    directoryLoading=false;directoryError=String(err?.message||"Unable to load event records");
     setConnection("Cannot load complete event records · tap Sync to retry");
     if(!state.token)renderConnectionError(err.message);
+    if($("#peopleRolesDialog")?.open)renderPeopleRoles();
     toast("Some records are unavailable. Your last confirmed view was not replaced.");
   }
 }
@@ -524,9 +548,16 @@ async function loadBootstrap({preserveView=false}={}){
   const result=await Api.request("bootstrap");
   if(!result?.ok)throw new Error(result?.error||"Database setup failed");
   assertApiV29(result);
+  // A partially populated bootstrap must never wipe a last-good directory.
+  if(result.directoryContract!==293||!Array.isArray(result.users)||!Array.isArray(result.committees)||
+     !Array.isArray(result.members)||!Number.isSafeInteger(result.directoryCount)||
+     result.directoryCount!==result.users.length)
+    throw new Error("Incomplete directory response. Deploy the v2.9.3 Code.gs backend.");
+  if(state.token && (!result.users.length||!result.users.some(u=>u.id===state.user?.id)))
+    throw new Error("Directory was unexpectedly empty; keeping the last confirmed people list.");
   state.bootstrap=result;
   // Never clear or repaint the currently visible committee data during fetch.
-  if(!state.token&&!preserveView){state.committees=result.committees||[];state.members=result.members||[];}
+  if(!state.token&&!preserveView){state.committees=result.committees;state.members=result.members;}
   renderLoginUsers();
 }
 function renderLoginUsers(){
@@ -551,16 +582,27 @@ function renderDataIntegrity(){
 }
 function validateFullSnapshot(result){
   assertApiV29(result);
-  if(!result?.ok || result.snapshotComplete!==true || !result.manifest)
-    throw new Error(result?.error||"Server did not confirm that every sheet was loaded.");
-  const required={Users:"users",Committees:"committees",CommitteeMembers:"members",Tasks:"tasks",TaskUpdates:"updates",ActivityLogs:"activity",FinanceEntries:"finance",FoodItems:"foodItems",Registrations:"registrations"};
+  const manifest=result?.manifest;
+  if(!result?.ok || result.snapshotComplete!==true || !manifest ||
+     manifest.contract!==293 || !manifest.visible)
+    throw new Error(result?.error||"Sheet data is incomplete. Deploy the v2.9.3 Code.gs backend.");
+  const required={Users:"users",Committees:"committees",CommitteeMembers:"members",
+    Tasks:"tasks",TaskUpdates:"updates",ActivityLogs:"activity",FinanceEntries:"finance",
+    FoodItems:"foodItems",Registrations:"registrations"};
   for(const [sheet,field] of Object.entries(required)){
-    if(!Array.isArray(result[field]) || !Number.isSafeInteger(result.manifest[sheet]) || result.manifest[sheet]<0)
-      throw new Error(`Incomplete response: ${sheet} was not loaded.`);
-    if(["TaskUpdates","FinanceEntries","FoodItems"].includes(sheet) && result[field].length!==result.manifest[sheet])
-      throw new Error(`Incomplete response: ${sheet} count mismatch.`);
-    if(result[field].length>result.manifest[sheet])throw new Error(`Invalid response: ${sheet} count mismatch.`);
+    const raw=manifest[sheet],visible=manifest.visible[sheet],records=result[field];
+    if(!Array.isArray(records)||!Number.isSafeInteger(raw)||raw<0||
+       !Number.isSafeInteger(visible)||visible<0||visible>raw||records.length!==visible)
+      throw new Error(`Incomplete response: ${sheet} records did not match the server counts.`);
   }
+  if(!Array.isArray(result.archivedCommittees)||
+     result.archivedCommittees.length!==manifest.visible.ArchivedCommittees)
+    throw new Error("Incomplete response: archived committees did not match the server count.");
+  if(!result.users.length || (state.user&&!result.users.some(u=>u.id===state.user.id)))
+    throw new Error("People & Roles was unexpectedly empty. Previous confirmed directory retained.");
+  // A response that claims fewer users than the currently verified directory
+  // might reflect a legitimate removal. We trust it only after the backend
+  // supplies an explicit count, not an empty/missing collection.
   return true;
 }
 async function refreshData({allowPending=false}={}){
@@ -581,6 +623,7 @@ async function refreshData({allowPending=false}={}){
     renderLoginUsers();
   }
   lastRefreshAt=Date.now();
+  fullSnapshotLoaded=true;directoryLoading=false;directoryError="";
   // Never cache unconfirmed optimistic records as confirmed sheet data.
   if(allowPending&&unsyncedCount())markPendingRegistrations();
   else saveConfirmedSnapshot();
@@ -594,6 +637,11 @@ async function verifiedRefreshWithRetry(attempts=3,options={}){
     try{return await refreshData(options);}catch(err){
       error=err;if(/SESSION_INVALID|Backend version mismatch/.test(String(err.message)))break;
     }
+  }
+  if(!fullSnapshotLoaded){
+    directoryLoading=false;
+    directoryError=(error?.message||"The complete directory is not available yet.");
+    if($("#peopleRolesDialog")?.open)renderPeopleRoles();
   }
   throw error||new Error("Unable to verify complete Google Sheets response.");
 }
@@ -789,6 +837,20 @@ function openPeopleRoles(){
   renderPeopleRoles();
   if(!$("#peopleRolesDialog").open)$("#peopleRolesDialog").showModal();
 }
+async function retryPeopleRolesLoad(){
+  if(directoryFetchPromise)return directoryFetchPromise;
+  directoryLoading=true;directoryError="";renderPeopleRoles();
+  directoryFetchPromise=(async()=>{
+    await loadBootstrap({preserveView:fullSnapshotLoaded});
+    await verifiedRefreshWithRetry(3,{allowPending:unsyncedCount()>0});
+  })().catch(err=>{
+    directoryError=String(err?.message||"Could not load the directory.");
+    setConnection("Directory not refreshed · previous confirmed data retained");
+  }).finally(()=>{
+    directoryLoading=false;directoryFetchPromise=null;renderPeopleRoles();
+  });
+  return directoryFetchPromise;
+}
 function personTasks(userId){
   return activeTasks().filter(t=>Array.isArray(t.assigneeIds)&&t.assigneeIds.includes(userId)).sort(personalTaskOrder);
 }
@@ -796,6 +858,19 @@ function describeResponsibility(a){return a.committee+(a.responsibility?` — ${
 function renderPeopleRoles(){
   const host=$("#peopleRolesList");
   if(!state.user){host.innerHTML='<div class="empty-state">Sign in to view people and roles.</div>';return;}
+  if(!fullSnapshotLoaded){
+    const isLoading=directoryLoading;
+    $("#peopleRolesStats").textContent=isLoading?"Loading people and assignments…":"Directory is not available yet";
+    host.innerHTML=`<div class="empty-state directory-loading" role="status">
+      ${isLoading?'<span class="form-busy-spinner" aria-hidden="true"></span>':''}
+      <strong>${isLoading?"Loading people & roles…":"People & roles not loaded"}</strong>
+      <p class="muted">${isLoading?"Checking the complete Google Sheets records. Your data has not been cleared.":esc(directoryError||"The server did not return a complete directory. Your previous records were not overwritten.")}</p>
+      ${isLoading?'':'<button type="button" class="small-btn" id="retryPeopleRolesBtn">Retry loading</button>'}
+    </div>`;
+    $("#copyPeopleRolesBtn").disabled=true;
+    $("#retryPeopleRolesBtn")?.addEventListener("click",()=>retryPeopleRolesLoad());
+    return;
+  }
   const {people,total}=peopleRolesData();
   $("#peopleRolesStats").textContent=`${people.length} of ${total} people · A–Z/Z–A sorting · committee roles & assigned tasks`;
   host.innerHTML=people.length?people.map((p,index)=>{
