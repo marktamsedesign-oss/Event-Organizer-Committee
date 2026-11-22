@@ -1,8 +1,8 @@
-/* Pasko ng Angkan 2026 — v2.7 browser UI; compatible with v2.4 Apps Script API. */
+/* Pasko ng Angkan 2026 — v2.9 persistent login, verified sync, registration. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
-  activity:[],finance:[],foodItems:[],archivedCommittees:[],activeTab:"committees",managingCommitteeId:null
+  activity:[],finance:[],foodItems:[],registrations:[],archivedCommittees:[],activeTab:"committees",managingCommitteeId:null
 };
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -27,12 +27,12 @@ function restoreSnapshot(userId){
     const snap=JSON.parse(sessionStorage.getItem(SNAPSHOT_KEY)||"null");
     // Cached data is short lived and tied to the currently signed-in identity.
     if(!snap||snap.userId!==userId||!snap.savedAt||Date.now()-snap.savedAt>12*3600*1000)return false;
-    if(!snap.bootstrap||!Array.isArray(snap.committees)||!Array.isArray(snap.tasks))return false;
+    if(!snap.bootstrap||!Array.isArray(snap.committees)||!Array.isArray(snap.tasks)||!Array.isArray(snap.registrations))return false;
     state.bootstrap=snap.bootstrap;
-    ["committees","members","tasks","finance","foodItems","activity","archivedCommittees"].forEach(key=>{
+    ["committees","members","tasks","updates","finance","foodItems","registrations","activity","archivedCommittees"].forEach(key=>{
       state[key]=Array.isArray(snap[key])?snap[key]:[];
     });
-    const tab=readTab();state.activeTab=["committees","tasks","finance","food","reports"].includes(tab)?tab:"committees";
+    const tab=readTab();state.activeTab=["committees","tasks","finance","food","registration","reports"].includes(tab)?tab:"committees";
     lastConfirmedAt=snap.savedAt;
     renderLoginUsers();
     return true;
@@ -43,9 +43,9 @@ function saveConfirmedSnapshot(){
   lastConfirmedAt=Date.now();
   try{sessionStorage.setItem(SNAPSHOT_KEY,JSON.stringify({
     userId:state.user.id,savedAt:lastConfirmedAt,
-    bootstrap:{ok:true,apiVersion:23,event:state.bootstrap.event,users:state.bootstrap.users,committees:state.committees,members:state.members},
-    committees:state.committees,members:state.members,tasks:state.tasks,
-    finance:state.finance,foodItems:state.foodItems,activity:state.activity,
+    bootstrap:{ok:true,apiVersion:29,event:state.bootstrap.event,users:state.bootstrap.users,committees:state.committees,members:state.members},
+    committees:state.committees,members:state.members,tasks:state.tasks,updates:state.updates,
+    finance:state.finance,foodItems:state.foodItems,registrations:state.registrations,activity:state.activity,
     archivedCommittees:state.archivedCommittees
   }))}catch{/* Storage may be unavailable or limited; live view still works. */}
 }
@@ -93,6 +93,7 @@ const ICON_PATHS={
   logout:'<path d="M10 17l5-5-5-5m5 5H3M13 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
   activity:'<path d="M4 12h3l3-8 4 16 3-8h3"/>',
   flag:'<path d="M4 21V4m0 1c5-3 8 3 16 0v11c-8 3-11-3-16 0"/>',
+  clipboard:'<rect x="8" y="4" width="13" height="18" rx="2"/><path d="M8 8H5a2 2 0 0 0-2 2v10M11 4V2h7v2"/>',
   'sort-asc':'<path d="M4 6h10M4 11h7M4 16h4M18 5v14m-4-4 4 4 4-4"/>',
   'sort-desc':'<path d="M4 6h4M4 11h7M4 16h10M18 19V5m-4 4 4-4 4 4"/>'
 };
@@ -102,7 +103,7 @@ function iconAction(buttonClass,id,label,iconName,extraClass=""){
 }
 function decorateStaticIcons(){
   $$('[data-icon]').forEach(el=>{if(el.querySelector('.ui-icon'))return;el.insertAdjacentHTML('afterbegin',icon(el.dataset.icon));});
-  const m={"myAssignmentsBtn":"list-todo","peopleRolesBtn":"users","copyAllCommitteesBtn":"copy","addUserTopBtn":"user-plus","addMemberTopBtn":"users","archiveMenuBtn":"archive","editProfileBtn":"switch","signOutBtn":"logout"};
+  const m={"myAssignmentsBtn":"list-todo","peopleRolesBtn":"users","copyAllCommitteesBtn":"copy","registerTopBtn":"user-plus","addUserTopBtn":"user-plus","addMemberTopBtn":"users","archiveMenuBtn":"archive","editProfileBtn":"switch","signOutBtn":"logout"};
   Object.entries(m).forEach(([id,ico])=>{const el=document.getElementById(id);if(el&&!el.querySelector('.ui-icon'))el.insertAdjacentHTML('afterbegin',icon(ico));});
 }
 
@@ -120,8 +121,11 @@ function canEditFinance(){return isManager()||isHeadOf("COM-FIN")}
 function canDeleteFinance(entry){return canEditFinance()&&(isManager()||entry?.recordedBy===state.user?.id)}
 function canEditFood(){return isManager()||isHeadOf("COM-FOOD")}
 function active(value){return value===true||value===1||String(value).toLowerCase()==="true"}
-function userName(id){return (state.bootstrap?.users||[]).find(u=>u.id===id)?.name||id||"Unknown"}
-function committeeName(id){return state.committees.find(c=>c.id===id)?.name||"Unassigned"}
+function userName(id){
+  const match=(state.bootstrap?.users||[]).find(u=>u.id===id);
+  return match?.name || (id?"Unmatched assignee (please reassign)":"Unassigned");
+}
+function committeeName(id){return (state.committees.find(c=>c.id===id)||state.bootstrap?.committees?.find(c=>c.id===id))?.name||"Unassigned"}
 // Task-count method: complete tasks / total tasks. Individual task % is independent.
 function committeeStats(id){const ts=state.tasks.filter(t=>t.committeeId===id);const completed=ts.filter(t=>t.status==="Completed").length;return {total:ts.length,completed,percent:ts.length?Math.round(completed*100/ts.length):0}}
 function committeeProgress(id){return committeeStats(id).percent}
@@ -154,24 +158,61 @@ function badge(value){return `<span class="badge ${statusClass(value)}">${esc(va
 async function api(action,data={}){
   try{return await Api.request(action,state.token?{...data,token:state.token}:data)}
   catch(err){
-    if(/session expired|sign in again/i.test(err.message)){
-      clearSession();renderAll();setConnection("Session expired");openLogin();
+    // Network interruptions must NEVER log somebody out.
+    // Only an explicit server-side revocation/inactive session may do that.
+    if(/SESSION_INVALID/.test(String(err.message||""))){
+      clearSession();renderAll();setConnection("This device needs to reconnect");openLogin();
     }
     throw err;
   }
 }
-function assertApiV23(response){if(Number(response?.apiVersion)!==23)throw new Error("The Apps Script deployment is outdated. Update Code.gs to v2.3, deploy a NEW version, and verify assets/js/api.js uses that /exec URL.")}
+function assertApiV29(response){
+  if(Number(response?.apiVersion)!==29)
+    throw new Error("Backend version mismatch: upload the v2.9 Code.gs, run setupDatabase(), and deploy a NEW Apps Script version. Update the /exec URL if it changed.");
+}
 function clearSession(){
   state.user=null;state.token=null;sessionClear();clearSnapshot();
   state.bootstrap=null;state.committees=[];state.members=[];state.tasks=[];state.updates=[];
-  state.finance=[];state.foodItems=[];state.activity=[];state.archivedCommittees=[];
+  state.finance=[];state.foodItems=[];state.registrations=[];state.activity=[];state.archivedCommittees=[];
   updateSaveState();
+}
+function setFormBusy(form,busy,message="Saving…"){
+  if(!form)return;
+  let layer=form.querySelector(":scope > .form-busy-overlay");
+  if(busy&&!layer){
+    layer=document.createElement("div");layer.className="form-busy-overlay";
+    layer.setAttribute("role","status");layer.setAttribute("aria-live","polite");
+    layer.innerHTML=`<span class="form-busy-spinner" aria-hidden="true"></span><strong></strong>`;
+    form.appendChild(layer);
+  }
+  if(layer){layer.querySelector("strong").textContent=message;layer.hidden=!busy;}
+  form.classList.toggle("is-busy",!!busy);
+  form.setAttribute("aria-busy",String(!!busy));
+}
+const OUTBOX_KEY="pna_pending_outbox_v29";
+function persistOutbox(){
+  try{
+    const all=[...failedJobs,...(inflightJob?[inflightJob]:[]),...writes].map(job=>({action:job.action,payload:job.payload,requestId:job.requestId,userId:job.userId||state.user?.id}));
+    localStorage.setItem(OUTBOX_KEY,JSON.stringify(all));
+  }catch{/* Browser may block storage; the unsynced indicator still protects navigation. */}
+}
+function restoreOutbox(){
+  try{
+    const all=JSON.parse(localStorage.getItem(OUTBOX_KEY)||"[]");
+    if(!Array.isArray(all)||!state.user||!state.token)return;
+    const mine=all.filter(j=>j.userId===state.user.id&&j.action&&j.requestId);
+    if(mine.length){
+      failedJobs.push(...mine.map(j=>({...j,token:state.token,error:"Restored pending save from this device"})));
+      toast(`${mine.length} unsynced change(s) restored. Press Sync to retry.`);
+      updateSaveState();
+    }
+  }catch{}
 }
 
 // v2.3: optimistic UI, serialized background writes, a visible unsynced badge.
 // Failed jobs keep their original requestId. Server-side WriteReceipts makes
 // a manual retry idempotent even if a prior confirmation was lost.
-let pendingWrites=0, writing=false, writes=[],failedJobs=[],changeVersion=0;
+let pendingWrites=0, writing=false, writes=[],failedJobs=[],inflightJob=null,changeVersion=0;
 let lastRefreshAt=0, refreshing=false;
 function unsyncedCount(){return pendingWrites+failedJobs.length;}
 function updateSaveState(){
@@ -191,17 +232,20 @@ function updateSaveState(){
   btn.setAttribute("aria-label",total?`Sync ${total} pending change(s) and refresh`:"Refresh and sync with Google Sheets");
   btn.title=failedJobs.length?`Retry ${failedJobs.length} unconfirmed change(s) and refresh`:pendingWrites?`${pendingWrites} saving · data will refresh after sync`:refreshing?"Fetching latest data…":"Refresh latest data and sync pending edits";
 }
-function queueWrite(action,payload,optimistic){
-  if(!state.token)return toast("Sign in to make changes.");
+function queueWrite(action,payload,optimistic,{awaitConfirmation=false}={}){
+  if(!state.token){toast("Sign in to make changes.");return awaitConfirmation?Promise.reject(new Error("Please sign in.")):false;}
   const token=state.token;
   const requestId="req_"+Date.now()+"_"+Math.random().toString(36).slice(2,10);
   changeVersion++;
   if(optimistic)optimistic();
   pendingWrites++;
-  writes.push({action,payload,token,requestId});
+  let done,resolve,reject;
+  if(awaitConfirmation)done=new Promise((ok,fail)=>{resolve=ok;reject=fail});
+  writes.push({action,payload,token,requestId,userId:state.user.id,resolve,reject});
+  persistOutbox();
   updateSaveState();renderAll();
   Promise.resolve().then(drainWrites);
-  return true;
+  return awaitConfirmation?done:true;
 }
 async function drainWrites(){
   if(writing)return;
@@ -209,6 +253,7 @@ async function drainWrites(){
   try{
     while(writes.length){
       const job=writes.shift();
+      inflightJob=job;persistOutbox();
       try{
         const result=await Api.request(job.action,{...job.payload,token:job.token},job.requestId);
         if(!result?.ok)throw new Error(result?.error||"Server rejected the change.");
@@ -216,11 +261,13 @@ async function drainWrites(){
           if(!state.bootstrap.users.some(u=>u.id===result.user.id))state.bootstrap.users.push(result.user);
           renderLoginUsers();
         }
+        if(job.resolve)job.resolve(result);
       }catch(error){
-        failedJobs.push({...job,error:error.message});
+        failedJobs.push({...job,error:error.message,resolve:undefined,reject:undefined});
+        if(job.reject)job.reject(error);
         toast("Not synced: "+error.message+". Press Sync & Refresh to retry.");
       }finally{
-        pendingWrites--;updateSaveState();
+        pendingWrites--;inflightJob=null;persistOutbox();updateSaveState();
       }
     }
   }finally{
@@ -240,7 +287,7 @@ async function refreshLatest({includeBootstrap=false,silent=false}={}){
   refreshing=true;updateSaveState();
   try{
     if(includeBootstrap)await loadBootstrap({preserveView:true});
-    const updated=await refreshData();
+    const updated=await verifiedRefreshWithRetry();
     if(updated&&!silent)toast("Latest Google Sheets updates loaded");
     return updated;
   }catch(err){
@@ -256,7 +303,7 @@ async function manualSyncRefresh(){
     const retry=failedJobs.splice(0);
     pendingWrites+=retry.length;
     writes.unshift(...retry);
-    updateSaveState();
+    persistOutbox();updateSaveState();
     toast(`Retrying ${retry.length} change${retry.length===1?"":"s"} and refreshing after confirmation…`);
     Promise.resolve().then(drainWrites);
     return;
@@ -276,8 +323,8 @@ async function init(){
   bindEvents();
   preventAccidentalZoom();
   updateSaveState();
-  setInterval(()=>{if(Date.now()-lastRefreshAt>60000)backgroundRefresh()},60000);
-  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&Date.now()-lastRefreshAt>60000)backgroundRefresh()});
+  setInterval(()=>{if(Date.now()-lastRefreshAt>30000)backgroundRefresh()},30000);
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&Date.now()-lastRefreshAt>30000)backgroundRefresh()});
   window.addEventListener("beforeunload",event=>{if(unsyncedCount()){event.preventDefault();event.returnValue=""}});
   let showedCache=false;
   const stored=sessionGet();
@@ -287,6 +334,7 @@ async function init(){
       if(sess.user&&sess.token){
         state.user=sess.user;state.token=sess.token;
         showedCache=restoreSnapshot(state.user.id);
+        restoreOutbox();
         if(showedCache){
           renderAll();
           setConnection("Showing last confirmed view · checking Google Sheets…");
@@ -298,27 +346,36 @@ async function init(){
     // Every page load requests fresh committee records from Apps Script, even
     // when a cached view is immediately displayed in the meantime.
     await loadBootstrap({preserveView:showedCache});
-    if(state.token){await refreshData();return}
+    if(state.token){
+      if(failedJobs.length){
+        setConnection("Pending saves recovered · tap Sync to complete them");
+        if(showedCache)renderAll();
+        return;
+      }
+      await verifiedRefreshWithRetry();return;
+    }
     renderAll();setConnection("Sign in to view event records");openLogin();
   }catch(err){
-    if(/session expired|sign in again/i.test(err.message)){
-      clearSession();renderAll();openLogin();toast("Session expired. Please sign in again.");return;
+    if(/SESSION_INVALID/.test(err.message)){
+      clearSession();renderAll();openLogin();toast("This device needs a new sign-in.");return;
     }
     if(showedCache&&state.token){
       setConnection("Showing last confirmed view · Google Sheets unavailable");
       toast("Cannot load latest records; your previous view remains available.");
       return;
     }
-    setConnection("Cannot connect to event database");renderConnectionError(err.message);toast(err.message);
+    setConnection("Cannot load complete event records · tap Sync to retry");
+    if(!state.token)renderConnectionError(err.message);
+    toast("Some records are unavailable. Your last confirmed view was not replaced.");
   }
 }
 async function loadBootstrap({preserveView=false}={}){
   const result=await Api.request("bootstrap");
   if(!result?.ok)throw new Error(result?.error||"Database setup failed");
-  assertApiV23(result);
+  assertApiV29(result);
   state.bootstrap=result;
   // Never clear or repaint the currently visible committee data during fetch.
-  if(!preserveView){state.committees=result.committees||[];state.members=result.members||[];}
+  if(!state.token&&!preserveView){state.committees=result.committees||[];state.members=result.members||[];}
   renderLoginUsers();
 }
 function renderLoginUsers(){
@@ -328,27 +385,62 @@ function renderLoginUsers(){
   renderLoginPreview();
 }
 function renderConnectionError(message){$("#committeeList").innerHTML=`<div class="empty-state"><strong>Database connection needs attention</strong>${esc(message)}<p class="muted">Check the Apps Script v2 deployment, the shared /exec URL, and your spreadsheet schema.</p></div>`}
+function renderDataIntegrity(){
+  const host=$("#dataIntegritySummary");if(!host)return;
+  const userIds=new Set((state.bootstrap?.users||[]).map(u=>u.id));
+  const unknown=[...new Set(state.tasks.flatMap(t=>Array.isArray(t.assigneeIds)?t.assigneeIds:[]).filter(id=>id&&!userIds.has(id)))];
+  const unknownMemberIds=[...new Set(state.members.map(m=>m.userId).filter(id=>id&&!userIds.has(id)))];
+  if(unknown.length||unknownMemberIds.length){
+    host.textContent=`${unknown.length} unmatched task assignee ID(s), ${unknownMemberIds.length} unmatched member ID(s). A Director should review these assignments. No records were silently discarded.`;
+    host.classList.add("data-warning");
+  }else{
+    host.textContent=`All loaded task assignees and committee members match active users. ${state.updates.length} task updates loaded. ${state.registrations.length} active registrations.`;
+    host.classList.remove("data-warning");
+  }
+}
+function validateFullSnapshot(result){
+  assertApiV29(result);
+  if(!result?.ok || result.snapshotComplete!==true || !result.manifest)
+    throw new Error(result?.error||"Server did not confirm that every sheet was loaded.");
+  const required={Users:"users",Committees:"committees",CommitteeMembers:"members",Tasks:"tasks",TaskUpdates:"updates",ActivityLogs:"activity",FinanceEntries:"finance",FoodItems:"foodItems",Registrations:"registrations"};
+  for(const [sheet,field] of Object.entries(required)){
+    if(!Array.isArray(result[field]) || !Number.isSafeInteger(result.manifest[sheet]) || result.manifest[sheet]<0)
+      throw new Error(`Incomplete response: ${sheet} was not loaded.`);
+    if(["TaskUpdates","FinanceEntries","FoodItems"].includes(sheet) && result[field].length!==result.manifest[sheet])
+      throw new Error(`Incomplete response: ${sheet} count mismatch.`);
+    if(result[field].length>result.manifest[sheet])throw new Error(`Invalid response: ${sheet} count mismatch.`);
+  }
+  return true;
+}
 async function refreshData(){
   if(!state.token){await loadBootstrap();renderAll();return true}
   if(unsyncedCount())return false;
   const version=changeVersion,token=state.token;
   const result=await api("getData");
   if(!result?.ok)throw new Error(result?.error||"Could not load event records");
-  assertApiV23(result);
-  // Prevent an older read from overwriting a newer optimistic edit.
+  validateFullSnapshot(result);
+  // Commit ONE complete snapshot at a time, never a partial list or stale read.
   if(version!==changeVersion||token!==state.token||unsyncedCount())return false;
-  state.committees=result.committees||[];state.members=result.members||[];
-  state.tasks=result.tasks||[];state.activity=result.activity||[];
-  state.finance=result.finance||[];state.foodItems=result.foodItems||[];
-  state.archivedCommittees=result.archivedCommittees||[];
+  const fields=["committees","members","tasks","updates","activity","finance","foodItems","registrations","archivedCommittees"];
+  for(const field of fields)state[field]=result[field];
   if(state.bootstrap){
     state.bootstrap.members=state.members;state.bootstrap.committees=state.committees;
-    if(result.users)state.bootstrap.users=result.users;
+    state.bootstrap.users=result.users;
     renderLoginUsers();
   }
   lastRefreshAt=Date.now();
   saveConfirmedSnapshot();
-  setConnection(`Signed in as ${state.user.name}`,true);renderAll();return true;
+  setConnection(`Synced · ${state.user.name}`,true);renderAll();return true;
+}
+async function verifiedRefreshWithRetry(attempts=3){
+  let error;
+  for(let i=0;i<attempts;i++){
+    if(i)await new Promise(resolve=>setTimeout(resolve,750*i));
+    try{return await refreshData();}catch(err){
+      error=err;if(/SESSION_INVALID|Backend version mismatch/.test(String(err.message)))break;
+    }
+  }
+  throw error||new Error("Unable to verify complete Google Sheets response.");
 }
 
 function bindEvents(){
@@ -390,16 +482,35 @@ function bindEvents(){
   };
   $("#addUserTopBtn").onclick=()=>{$("#addMenu").classList.add("hidden");$("#addMenuBtn").setAttribute("aria-expanded","false");userEditor()};
   $("#addMemberTopBtn").onclick=()=>{$("#addMenu").classList.add("hidden");$("#addMenuBtn").setAttribute("aria-expanded","false");topMemberEditor()};
+  $("#registerTopBtn").onclick=()=>{$("#addMenu").classList.add("hidden");switchTab("registration");openRegistrationEditor()};
   $("#profileBtn").onclick=()=>{$("#addMenu").classList.add("hidden");$("#mainMenu").classList.add("hidden");$("#profileMenu").classList.toggle("hidden")};
   $("#editProfileBtn").onclick=()=>{if(!allowNavigation())return;$("#profileMenu").classList.add("hidden");openLogin(true)};
   $("#archiveMenuBtn").onclick=()=>{$("#profileMenu").classList.add("hidden");openArchives()};
-  $("#signOutBtn").onclick=()=>{if(!allowNavigation())return;clearSession();$("#profileMenu").classList.add("hidden");renderAll();setConnection("Signed out");openLogin()};
+  $("#signOutBtn").onclick=async()=>{
+    if(!allowNavigation())return;
+    const token=state.token;
+    $("#profileMenu").classList.add("hidden");
+    setConnection("Signing out…");
+    if(token){try{await Api.request("logout",{token})}catch{toast("Couldn't confirm server sign-out. Close this browser on shared devices.")}}
+    clearSession();renderAll();setConnection("Signed out");openLogin();
+  };
   $("#loginUser").onchange=renderLoginPreview;
   $("#loginForm").onsubmit=login;
   $("#addCommitteeBtn").onclick=()=>committeeEditor();
   $("#addTaskBtn").onclick=()=>taskEditor();
   $("#addFinanceBtn").onclick=()=>financeEditor();
   $("#addFoodBtn").onclick=()=>foodEditor();
+  $("#registerBtn").onclick=()=>openRegistrationEditor();
+  $("#registrationSearch").oninput=renderRegistration;
+  $("#registrationTypeFilter").onchange=renderRegistration;
+  $("#registrationForm").onsubmit=saveRegistrationForm;
+  $("#registrationRetryBtn").onclick=()=>{$("#registrationDialog").close();manualSyncRefresh()};
+  $("#registrationAttendees").addEventListener("input",()=>{});
+  $("#registrationType").onchange=()=>{
+    const isFamily=$("#registrationType").value==="Family";
+    $("#registrationAttendees").disabled=!isFamily;
+    if(!isFamily)$("#registrationAttendees").value="1";
+  };
   $("#addMemberBtn").onclick=()=>{const committee=state.committees.find(c=>c.id===state.managingCommitteeId);if(committee)memberEditor(committee)};
   $("#taskCommitteeFilter").onchange=renderTasks;
   $("#taskStatusFilter").onchange=renderTasks;
@@ -436,18 +547,20 @@ function openLogin(switching=false){
 async function login(ev){
   ev.preventDefault();const form=$("#loginForm"),button=form.querySelector('button[type="submit"]');
   const password=$("#loginPassword").value;
-  $("#loginError").textContent="";button.disabled=true;
+  $("#loginError").textContent="";button.disabled=true;setFormBusy(form,true,"Signing you in…");
   try{
     const result=await Api.request("login",{userId:$("#loginUser").value,password});
     if(!result?.ok)throw new Error(result?.error||"Sign-in failed");
     state.user=result.user;state.token=result.token;
     sessionSet({user:state.user,token:state.token});
     $("#loginDialog").close();
-    await refreshData();
-    const memberCount=state.members.filter(m=>m.userId===state.user.id&&active(m.active)).length;
-    toast(`Welcome, ${state.user.name}! ${memberCount} committee${memberCount===1?"":"s"} assigned.`);
+    toast(`Welcome, ${state.user.name}! Loading your latest records…`);
+    try{await verifiedRefreshWithRetry()}catch(err){
+      setConnection("Signed in · full data refresh pending");
+      toast("Signed in, but complete records are temporarily unavailable. Tap Sync to retry.");
+    }
   }catch(err){$("#loginError").textContent=err.message}
-  finally{$("#loginPassword").value="";button.disabled=false}
+  finally{$("#loginPassword").value="";button.disabled=false;setFormBusy(form,false)}
 }
 function renderProfile(){
   $("#profileName").textContent=state.user?.name||"Sign in";
@@ -458,14 +571,16 @@ function renderProfile(){
   $("#addTaskBtn").classList.toggle("hidden",!canCreateTasks());
   $("#addFinanceBtn").classList.toggle("hidden",!canEditFinance());
   $("#addFoodBtn").classList.toggle("hidden",!canEditFood());
+  $("#registerBtn").classList.toggle("hidden",!state.user);
   const assignable=state.committees.some(c=>canManageMembers(c.id));
-  $("#addMenuBtn").classList.toggle("hidden",!state.user||(!isManager()&&!assignable));
+  $("#addMenuBtn").classList.toggle("hidden",!state.user);
   $("#addUserTopBtn").classList.toggle("hidden",!isManager());
   $("#addMemberTopBtn").classList.toggle("hidden",!assignable);
+  $("#registerTopBtn").classList.toggle("hidden",!state.user);
   $("#archiveMenuBtn").classList.toggle("hidden",!isManager());
 }
 function renderAll(){
-  renderProfile();populateFilters();renderSummary();renderCommittees();renderTasks();renderFinance();renderFood();renderReports();
+  renderProfile();populateFilters();renderSummary();renderCommittees();renderTasks();renderFinance();renderFood();renderRegistration();renderReports();renderDataIntegrity();
   switchTab(state.activeTab);if($("#archivesDialog").open)renderArchives();
   if($("#myAssignmentsDialog").open)renderMyAssignments();
   if($("#peopleRolesDialog").open)renderPeopleRoles();
@@ -520,30 +635,47 @@ function openPeopleRoles(){
   renderPeopleRoles();
   if(!$("#peopleRolesDialog").open)$("#peopleRolesDialog").showModal();
 }
+function personTasks(userId){
+  return activeTasks().filter(t=>Array.isArray(t.assigneeIds)&&t.assigneeIds.includes(userId)).sort(personalTaskOrder);
+}
+function describeResponsibility(a){return a.committee+(a.responsibility?` — ${a.responsibility}`:"");}
 function renderPeopleRoles(){
   const host=$("#peopleRolesList");
   if(!state.user){host.innerHTML='<div class="empty-state">Sign in to view people and roles.</div>';return;}
   const {people,total}=peopleRolesData();
-  const heads=people.filter(p=>p.heads.length).length;
-  const supporters=people.filter(p=>p.support.length).length;
-  $("#peopleRolesStats").textContent=`${people.length} of ${total} people · ${heads} serving as Head · ${supporters} serving as Support`;
+  $("#peopleRolesStats").textContent=`${people.length} of ${total} people · A–Z/Z–A sorting · committee roles & assigned tasks`;
   host.innerHTML=people.length?people.map((p,index)=>{
-    const renderGroup=(label,arr)=>`<div class="people-role-group"><h4>${label} <span>(${arr.length})</span></h4>${arr.length?`<ul>${arr.map(a=>`<li><span class="people-committee-name">${esc(a.committee)}</span>${a.responsibility?`<small>${esc(a.responsibility)}</small>`:""}</li>`).join("")}</ul>`:'<p class="muted">No assignments</p>'}</div>`;
-    return `<article class="people-person-card"><div class="people-person-heading"><span class="people-person-number">${index+1}</span><div><h3>${esc(p.name)}</h3><p class="muted">${esc(p.position||"No position listed")} · ${esc(p.accessRole)}</p></div></div><div class="people-role-columns">${renderGroup("Head",p.heads)}${renderGroup("Support",p.support)}</div></article>`;
+    const assigned=personTasks(p.id),done=assigned.filter(t=>t.status==="Completed").length;
+    const roles=[...p.heads.map(a=>`<li>👤 <b>Head</b> · ${esc(describeResponsibility(a))}</li>`),...p.support.map(a=>`<li>🤝 <b>Support</b> · ${esc(describeResponsibility(a))}</li>`)].join("");
+    const needs=assigned.filter(t=>t.status!=="Completed").slice(0,3).map(t=>`<li>${esc(t.title)} · ${esc(committeeName(t.committeeId))}${t.dueDate?` · Due ${esc(shortDate(t.dueDate))}`:""}</li>`).join("");
+    return `<article class="people-person-card"><div class="people-person-heading"><span class="people-person-number">${index+1}</span><div><h3>${esc(p.name)}</h3><p class="muted">${p.heads.length} Head · ${p.support.length} Support · ${done}/${assigned.length} tasks complete</p></div></div><ul class="people-compact-roles">${roles||'<li>No committee assignment yet</li>'}</ul>${assigned.length?`<div class="people-task-mini"><strong>To do (${assigned.length-done})</strong>${needs?`<ul>${needs}</ul>`:" · All assigned tasks done"}</div>`:""}</article>`;
   }).join(""):'<div class="empty-state"><strong>No matching people</strong>Try a different name, role, or committee.</div>';
   $("#copyPeopleRolesBtn").disabled=!people.length;
 }
+function shortDate(value){
+  if(!value)return "";
+  const plain=String(value).slice(0,10);
+  const date=new Date(plain+"T12:00:00+08:00");
+  return Number.isNaN(date.getTime())?String(value):new Intl.DateTimeFormat("en-PH",{month:"short",day:"numeric",timeZone:"Asia/Manila"}).format(date);
+}
 function buildPeopleRolesText(){
-  const {people,total}=peopleRolesData();
-  const lines=["🎄 *PASKO NG ANGKAN 2026*","👥 *PEOPLE & ROLES DIRECTORY*",`👤 ${people.length} of ${total} active people · Sorted by name ${$("#peopleRolesSort").dataset.sortOrder==="name-desc"?"Z–A":"A–Z"}`];
-  if(unsyncedCount())lines.push(`⚠️ ${unsyncedCount()} change(s) not yet confirmed by Google Sheets.`);
+  const {people}=peopleRolesData();
+  const assignedTotal=people.reduce((n,p)=>n+personTasks(p.id).length,0);
+  const lines=["🎄 *PASKO NG ANGKAN 2026*",`👥 *PEOPLE & TASKS* · ${people.length} people · ${assignedTotal} task assignments`];
+  if(unsyncedCount())lines.push("⚠️ Some recent changes are not yet confirmed by Sheets.");
   people.forEach((p,i)=>{
-    lines.push("",`${i+1}. *${p.name}*`, `Position: ${p.position||"Not listed"}`,`System role: ${p.accessRole}`);
-    lines.push(`👤 Head (${p.heads.length}): ${p.heads.length?p.heads.map(a=>a.committee+(a.responsibility?` — ${a.responsibility}`:"")).join("; "):"None"}`);
-    lines.push(`🤝 Support (${p.support.length}): ${p.support.length?p.support.map(a=>a.committee+(a.responsibility?` — ${a.responsibility}`:"")).join("; "):"None"}`);
+    const ts=personTasks(p.id),done=ts.filter(t=>t.status==="Completed").length;
+    lines.push("",`${i+1}. *${p.name}* · ${done}/${ts.length} tasks done`);
+    p.heads.forEach(a=>lines.push(`👤 Head: ${describeResponsibility(a)}`));
+    p.support.forEach(a=>lines.push(`🤝 Support: ${describeResponsibility(a)}`));
+    if(!p.heads.length&&!p.support.length)lines.push("No committee assignment yet");
+    const open=ts.filter(t=>t.status!=="Completed");
+    if(open.length){lines.push(`📝 To do (${open.length}):`);open.forEach(t=>lines.push(`  ☐ ${t.title} (${committeeName(t.committeeId)}${t.dueDate?`, ${shortDate(t.dueDate)}`:""})`));}
+    else if(ts.length)lines.push("✅ All assigned tasks completed");
   });
   return lines.join("\n");
 }
+
 async function copyPeopleRoles(){
   const body=buildPeopleRolesText();
   const {people}=peopleRolesData();
@@ -788,6 +920,80 @@ function renderFood(){
   });
 }
 
+const REGISTRATION_TYPES=["Family","Working Adult","Non-Working Adult","Youth","Kids","Visitors"];
+function canEditRegistration(r){return isManager()||r.registeredBy===state.user?.id}
+function renderRegistration(){
+  const list=$("#registrationList");if(!list)return;
+  const rows=state.registrations.filter(r=>active(r.active));
+  const headCount=rows.reduce((n,r)=>n+(Number(r.attendeeCount)||1),0);
+  $("#registrationTotal").textContent=String(rows.length);
+  $("#registrationPeople").textContent=String(headCount);
+  $("#registrationBreakdown").innerHTML=REGISTRATION_TYPES.map(type=>{
+    const relevant=rows.filter(r=>r.registrationType===type);
+    const participants=relevant.reduce((n,r)=>n+(Number(r.attendeeCount)||1),0);
+    return `<div class="registration-type-stat"><strong>${participants}</strong><span>${esc(type)}</span></div>`;
+  }).join("");
+  const query=$("#registrationSearch").value.trim().toLocaleLowerCase();
+  const type=$("#registrationTypeFilter").value;
+  const visible=rows.filter(r=>(!type||r.registrationType===type)&&(!query||[r.name,r.registrationType,r.notes].some(x=>String(x||"").toLocaleLowerCase().includes(query))));
+  list.innerHTML=visible.length?visible.sort((a,b)=>String(a.name).localeCompare(String(b.name),"en-PH")).map(r=>{
+    const controls=canEditRegistration(r)?`<div class="registration-row-actions">${iconAction("edit-registration",r.id,"Edit registration","pencil")}${iconAction("archive-registration",r.id,"Remove registration","trash")}</div>`:"";
+    return `<article class="registration-card"><div><strong>${esc(r.name)}</strong><p class="muted">${esc(r.registrationType)}${Number(r.attendeeCount)>1?` · ${Number(r.attendeeCount)} attendees`:""}</p>${r.notes?`<p class="registration-notes">${esc(r.notes)}</p>`:""}<small class="muted">Registered by ${esc(r.registeredByName||"Unknown")} · ${esc(r.createdAt||"")}</small></div>${controls}</article>`;
+  }).join(""):'<div class="empty-state">No matching registrations yet.</div>';
+  list.querySelectorAll(".edit-registration").forEach(b=>b.onclick=()=>openRegistrationEditor(rows.find(r=>r.id===b.dataset.id)));
+  list.querySelectorAll(".archive-registration").forEach(b=>b.onclick=async()=>{
+    const row=rows.find(r=>r.id===b.dataset.id);
+    if(!row||!await confirmAction(`Remove ${row.name} from the active registration list? The record stays in Sheets.`))return;
+    queueWrite("deleteRegistration",{id:row.id},()=>{row.active=false});
+  });
+}
+function openRegistrationEditor(item=null){
+  if(!state.user)return openLogin();
+  if(item&&!canEditRegistration(item))return toast("Only the registrar or Directors can edit this entry.");
+  const form=$("#registrationForm");
+  form.dataset.recordId=item?.id||"";
+  form.dataset.needsSync="false";
+  $("#registrationDialogTitle").textContent=item?"Edit registration":"Register participant";
+  $("#registrationName").value=item?.name||"";
+  $("#registrationType").value=item?.registrationType||"Working Adult";
+  $("#registrationAttendees").value=String(item?.attendeeCount||1);
+  $("#registrationAttendees").disabled=$("#registrationType").value!=="Family";
+  $("#registrationNotes").value=item?.notes||"";
+  $("#registrationError").textContent="";
+  $("#registrationRetryBtn").classList.add("hidden");
+  setFormBusy(form,false);
+  if(!$("#registrationDialog").open)$("#registrationDialog").showModal();
+}
+async function saveRegistrationForm(event){
+  event.preventDefault();const form=event.target;
+  if(form.classList.contains("is-busy"))return;
+  if(form.dataset.needsSync==="true"){
+    $("#registrationError").textContent="This registration is awaiting confirmation. Use Close and retry Sync; do not submit it twice.";
+    return;
+  }
+  const old=state.registrations.find(r=>r.id===form.dataset.recordId);
+  const record={id:old?.id||localId(),name:$("#registrationName").value.trim(),
+    registrationType:$("#registrationType").value,attendeeCount:Number($("#registrationAttendees").value||1),
+    notes:$("#registrationNotes").value.trim()};
+  if(!record.name){$("#registrationError").textContent="Please enter a name.";return;}
+  if(record.registrationType!=="Family")record.attendeeCount=1;
+  setFormBusy(form,true,"Saving registration in Google Sheets…");
+  $("#registrationError").textContent="";
+  try{
+    await queueWrite("saveRegistration",{registration:record},()=>{
+      if(old)Object.assign(old,{...record,active:true});
+      else state.registrations.push({...record,active:true,registeredBy:state.user.id,registeredByName:state.user.name,createdAt:new Date().toISOString()});
+    },{awaitConfirmation:true});
+    $("#registrationDialog").close();
+    toast(old?"Registration updated.":"Registration saved successfully.");
+  }catch(err){
+    form.dataset.needsSync="true";
+    $("#registrationRetryBtn").classList.remove("hidden");
+    $("#registrationError").textContent="Save is not confirmed. Close and retry Sync using the same request (no duplicate registration).";
+    setConnection("Registration save needs Sync");
+  }finally{setFormBusy(form,false)}
+}
+
 function renderReports(){
   const tasks=activeTasks();
   const total=tasks.length,done=tasks.filter(t=>t.status==="Completed").length;
@@ -1006,97 +1212,65 @@ function confirmAction(message){
 // Creates chat-friendly plain text from the committee records already loaded.
 // A committee's Support assignments act as its sub-team / role breakdown;
 // the database has no separate SubCommittees sheet or nesting field.
-function buildCommitteeShareText(){
-  const committees=state.committees.slice();
-  const ts=activeTasks();
-  const done=ts.filter(t=>t.status==="Completed").length;
-  const timestamp=new Intl.DateTimeFormat("en-PH",{dateStyle:"medium",timeStyle:"short",timeZone:"Asia/Manila"}).format(new Date(lastConfirmedAt||Date.now()));
-  const lines=[
-    "🎄 *PASKO NG ANGKAN 2026*",
-    "📅 December 13, 2026",
-    "*COMMITTEE DIRECTORY & TASK UPDATES*",
-    `📊 Overall: ${committees.length} committees · ${done}/${ts.length} tasks completed`,
-    `🕒 Last confirmed: ${timestamp} (PH time)`,
-  ];
-  if(unsyncedCount())lines.push(`⚠️ ${unsyncedCount()} change(s) not yet confirmed by Google Sheets.`);
-  lines.push("", "────────────────────");
-  if(!committees.length)lines.push("No committees are currently available.");
-  committees.forEach((c,i)=>{
+function committeeReportRows(detailed=false){
+  const lines=[];
+  const order={Blocked:0,Pending:1,"In Progress":2,Completed:3};
+  state.committees.forEach((c,index)=>{
     const members=state.members.filter(m=>m.committeeId===c.id&&active(m.active));
     const heads=members.filter(m=>m.role==="Head");
-    const support=members.filter(m=>m.role!=="Head");
-    const tasks=state.tasks.filter(t=>t.committeeId===c.id);
+    const helpers=members.filter(m=>m.role!=="Head");
+    const tasks=state.tasks.filter(t=>t.committeeId===c.id).sort((a,b)=>(order[a.status]??2)-(order[b.status]??2)||String(a.dueDate||"9999").localeCompare(String(b.dueDate||"9999")));
+    const open=tasks.filter(t=>t.status!=="Completed");
     const stats=committeeStats(c.id);
-    lines.push("",`${i+1}. *${c.name}*`,`📈 Progress: ${stats.percent}% (${stats.completed}/${stats.total} tasks complete)`);
-    if(String(c.description||"").trim())lines.push(`🎯 Responsibility: ${String(c.description).trim()}`);
-    lines.push(`👤 Head${heads.length===1?"":"s"}: ${heads.length?heads.map(m=>m.name+(m.supportRole?` — ${m.supportRole}`:"")).join("; "):"Not yet assigned"}`);
-    lines.push("🧩 *Support / sub-team responsibilities:* ");
-    if(support.length){
-      support.forEach(m=>lines.push(`  • ${m.name} — ${m.supportRole||"Support member"}`));
-    }else lines.push("  • None assigned yet");
-    lines.push(`📝 *Tasks (${stats.completed}/${stats.total} completed):*`);
-    if(!tasks.length)lines.push("  • No tasks listed");
-    else{
-      // Pending/blocked first, then tasks in progress, then completed.
-      const order={Blocked:0,Pending:1,"In Progress":2,Completed:3};
-      tasks.sort((a,b)=>(order[a.status]??2)-(order[b.status]??2)||String(a.dueDate||"9999").localeCompare(String(b.dueDate||"9999")));
-      tasks.forEach((t,j)=>{
-        const assignees=Array.isArray(t.assigneeIds)?t.assigneeIds.map(userName).filter(Boolean):[];
-        lines.push(`  ${t.status==="Completed"?"✅":"⬜"} ${j+1}. ${t.title} — ${t.status||"Pending"}`);
-        const details=[];
-        if(assignees.length)details.push(`Assigned: ${assignees.join(", ")}`);
-        if(t.dueDate)details.push(`Due: ${t.dueDate}`);
-        if(t.priority)details.push(`Priority: ${t.priority}`);
-        if(details.length)lines.push(`     ${details.join(" | ")}`);
-        if(t.status==="Completed"&&t.completedByName&&t.completedAt){
-          lines.push(`     ✓ Completed by ${t.completedByName} on ${formatCompletionDate(t.completedAt)}`);
-        }
-        if(t.description)lines.push(`     ↳ ${String(t.description).trim()}`);
-      });
+    lines.push("",`${index+1}. *${c.name}* · ${stats.completed}/${stats.total} done (${stats.percent}%)`);
+    lines.push(`👤 Lead${heads.length===1?"":"s"}: ${heads.map(m=>m.name).join(", ")||"Unassigned"}`);
+    if(detailed){
+      if(c.description)lines.push(`🎯 ${String(c.description).trim()}`);
+      if(helpers.length){lines.push("🤝 Support:");helpers.forEach(m=>lines.push(`  • ${m.name}${m.supportRole?` — ${m.supportRole}`:""}`));}
+      else lines.push("🤝 Support: Not assigned");
+      if(!tasks.length)lines.push("📝 No tasks assigned yet");
+      else{
+        lines.push(`📝 Tasks (${open.length} to do):`);
+        tasks.forEach(t=>{
+          const done=t.status==="Completed";
+          lines.push(`  ${done?"✅":"☐"} ${t.title}${t.status==="Blocked"?" [BLOCKED]":""}${t.priority==="Urgent"?" [URGENT]":""}`);
+          const assignees=Array.isArray(t.assigneeIds)?t.assigneeIds.map(userName):[];
+          if(assignees.length)lines.push(`     Responsible: ${assignees.join(", ")}`);
+          if(t.dueDate)lines.push(`     Due: ${shortDate(t.dueDate)}`);
+          if(done&&t.completedByName)lines.push(`     Done by ${t.completedByName}${t.completedAt?` · ${formatCompletionDate(t.completedAt)}`:""}`);
+          if(t.description)String(t.description).trim().split(/\r?\n/).forEach(line=>{if(line.trim())lines.push(`     ${line.trim()}`)});
+        });
+      }
+    }else{
+      if(helpers.length){
+        const names=helpers.slice(0,4).map(m=>m.name);
+        lines.push(`🤝 Support (${helpers.length}): ${names.join(", ")}${helpers.length>4?` +${helpers.length-4} others`:""}`);
+      }
+      if(open.length){
+        lines.push(`📝 To do (${open.length}):`);
+        open.slice(0,3).forEach(t=>{
+          const names=Array.isArray(t.assigneeIds)?t.assigneeIds.slice(0,2).map(userName):[];
+          lines.push(`  ☐ ${t.title}${names.length?` — ${names.join(", ")}`:""}${t.priority==="Urgent"?" ❗":""}`);
+        });
+        if(open.length>3)lines.push(`  + ${open.length-3} more tasks`);
+      }else lines.push(tasks.length?"✅ All tasks complete":"📝 No tasks yet");
     }
-    lines.push("", "────────────────────");
   });
-  lines.push("", "Shared for event planning and coordination.");
-  return lines.join("\n");
+  return lines;
 }
-// Short, chat-first report: every committee, lead/support names and a compact
-// task summary. Detailed mode retains the existing per-task descriptions, roles,
-// due dates and completion attribution.
+function buildCommitteeShareText(){
+  const tasks=activeTasks(),done=tasks.filter(t=>t.status==="Completed").length;
+  const lines=["🎄 *PASKO NG ANGKAN 2026*","*COMMITTEE RESPONSIBILITIES & TASKS*",`${state.committees.length} committees · ${done}/${tasks.length} tasks complete`];
+  if(unsyncedCount())lines.push("⚠️ Some local changes are not yet confirmed by Google Sheets.");
+  return [...lines,...committeeReportRows(true)].join("\n");
+}
 function buildCommitteeShareSimplifiedText(){
-  const committees=state.committees.slice();
-  const tasks=activeTasks();
-  const completed=tasks.filter(t=>t.status==="Completed").length;
-  const timestamp=new Intl.DateTimeFormat("en-PH",{month:"short",day:"numeric",year:"numeric",timeZone:"Asia/Manila"}).format(new Date(lastConfirmedAt||Date.now()));
-  const lines=[
-    "🎄 *PASKO NG ANGKAN 2026*",
-    "📅 December 13, 2026",
-    "📋 *COMMITTEE QUICK SUMMARY*",
-    `📊 ${committees.length} committees | ${completed}/${tasks.length} tasks done`,
-    `🕒 Updated: ${timestamp} (PH time)`,
-  ];
-  if(unsyncedCount())lines.push(`⚠️ ${unsyncedCount()} unsynced change(s) included locally.`);
-  if(!committees.length)lines.push("", "No active committees yet.");
-  committees.forEach((committee,index)=>{
-    const members=state.members.filter(m=>m.committeeId===committee.id&&active(m.active));
-    const heads=members.filter(m=>m.role==="Head");
-    const supporters=members.filter(m=>m.role!=="Head");
-    const mine=tasks.filter(t=>t.committeeId===committee.id);
-    const open=mine.filter(t=>t.status!=="Completed");
-    const stats=committeeStats(committee.id);
-    lines.push("", `${index+1}. *${committee.name}* — ${stats.percent}% (${stats.completed}/${stats.total} done)`);
-    lines.push(`👤 Head${heads.length===1?"":"s"}: ${heads.length?heads.map(m=>m.name).join(", "):"Not assigned"}`);
-    if(supporters.length){
-      lines.push(`🤝 Support: ${supporters.map(m=>m.name+(m.supportRole?` (${m.supportRole})`:"")).join("; ")}`);
-    }else lines.push("🤝 Support: None assigned");
-    if(open.length){
-      const maxTasks=2;
-      const titles=open.slice(0,maxTasks).map(t=>`${t.status==="Blocked"?"⛔":"▫️"} ${t.title}`).join("; ");
-      lines.push(`📝 To do (${open.length}): ${titles}${open.length>maxTasks?` (+${open.length-maxTasks} more)`:""}`);
-    }else lines.push(mine.length?"✅ All tasks completed":"📝 No tasks yet");
-  });
-  lines.push("", "For full responsibilities and task details, ask for the detailed committee report.");
-  return lines.join("\n");
+  const tasks=activeTasks(),done=tasks.filter(t=>t.status==="Completed").length;
+  const lines=["🎄 *PASKO NG ANGKAN 2026*","*COMMITTEE QUICK UPDATE*",`${state.committees.length} committees · ${done}/${tasks.length} tasks complete`];
+  if(unsyncedCount())lines.push("⚠️ Some local changes are not yet confirmed by Google Sheets.");
+  return [...lines,...committeeReportRows(false)].join("\n");
 }
+
 let currentShareMode="simple";
 function setShareMode(mode){
   currentShareMode=mode==="detailed"?"detailed":"simple";

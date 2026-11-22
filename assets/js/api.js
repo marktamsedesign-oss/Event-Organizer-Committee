@@ -5,8 +5,8 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbwD1tZSbWjT92MPi57NXriMtgUxnH1nyyMgB4-muUEAOLI7UAhqt7nuTGbAbvNDDSo6/exec";
 
 const Api = (() => {
-  const readTimeoutMs = 18000;
-  const writeConfirmTimeoutMs = 60000; // a busy spreadsheet may take longer than a normal GET
+  const readTimeoutMs = 55000;
+  const writeConfirmTimeoutMs = 90000; // a busy spreadsheet may take longer than a normal GET
 
   function jsonp(params) {
     return new Promise((resolve,reject) => {

@@ -1,3 +1,5 @@
+> **Current release: v2.9**. See [RELEASE-v2.9.md](RELEASE-v2.9.md) for the required backend upgrade, persistent login and the new Registration sheet.
+
 # Pasko ng Angkan 2026 — v2.6
 
 Mobile-friendly GitHub Pages frontend plus Google Apps Script/Google Sheets backend for managing Christmas event committees, people, tasks, receivables, expenses, and food supplies.

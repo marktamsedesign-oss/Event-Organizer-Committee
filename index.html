@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#172554">
   <meta name="description" content="Pasko ng Angkan 2026 event management">
+  <link rel="icon" type="image/svg+xml" href="assets/icons/favicon.svg?v=2.9">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/icons/apple-touch-icon.png?v=2.9">
   <title>Pasko ng Angkan 2026</title>
-  <link rel="stylesheet" href="assets/css/style.css?v=2.7">
+  <link rel="stylesheet" href="assets/css/style.css?v=2.9">
   <link rel="stylesheet" href="assets/css/hero-animation.css?v=2.8">
 </head>
 <body>
@@ -36,6 +38,7 @@
           <div id="addMenu" class="popover add-menu hidden" role="menu">
             <button id="addUserTopBtn" type="button" class="menu-item hidden" role="menuitem">Add new user</button>
             <button id="addMemberTopBtn" type="button" class="menu-item hidden" role="menuitem">Assign committee member</button>
+            <button id="registerTopBtn" type="button" class="menu-item" role="menuitem">Register attendee / visitor</button>
           </div>
         </div>
         <button id="profileBtn" class="profile-chip" aria-label="Open user profile">
@@ -140,6 +143,7 @@
         <button class="tab" data-tab="tasks"><span>☷</span> To-do list</button>
         <button class="tab" data-tab="finance"><span>₱</span> Finance</button>
         <button class="tab" data-tab="food"><span>♨</span> Food list</button>
+        <button class="tab" data-tab="registration"><span>♙</span> Registration</button>
         <button class="tab" data-tab="reports"><span>▥</span> Reports</button>
       </nav>
 
@@ -188,6 +192,23 @@
         <div id="foodList" class="food-groups"></div>
       </section>
 
+      <section id="tab-registration" class="tab-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">ATTENDANCE & VISITORS</p><h2>Event registration</h2><p class="muted">Register families, adults, youth, kids and visitors. Counts update from confirmed Google Sheets records.</p></div>
+          <button id="registerBtn" type="button" class="primary-btn" data-icon="user-plus" title="Register a participant" aria-label="Register a participant"></button>
+        </div>
+        <div class="summary-grid registration-totals">
+          <article class="summary-card"><span>Registrations</span><strong id="registrationTotal">0</strong></article>
+          <article class="summary-card"><span>Total attendees</span><strong id="registrationPeople">0</strong></article>
+        </div>
+        <div class="registration-breakdown" id="registrationBreakdown" aria-label="Registration category totals"></div>
+        <div class="filters registration-filters">
+          <label class="field search-field"><span>Search</span><input id="registrationSearch" type="search" placeholder="Find a participant or family"></label>
+          <label class="field"><span>Registration type</span><select id="registrationTypeFilter"><option value="">All types</option><option>Family</option><option>Working Adult</option><option>Non-Working Adult</option><option>Youth</option><option>Kids</option><option>Visitors</option></select></label>
+        </div>
+        <div class="registration-list" id="registrationList"></div>
+      </section>
+
       <section id="tab-reports" class="tab-panel">
         <div class="section-heading"><div><p class="eyebrow">DIRECTOR'S VIEW</p><h2>Progress reports</h2><p class="muted">Progress is automatically based on the number of completed tasks.</p></div><button id="exportBtn" type="button" class="secondary-btn" data-icon="download" title="Export CSV report" aria-label="Export CSV report"></button></div>
         <div id="reportOverview" class="report-overview"></div>
@@ -195,6 +216,7 @@
           <div class="panel"><h3>Committee progress</h3><div id="reportCommittees"></div></div>
           <div class="panel"><h3>Needs attention</h3><div id="reportPending"></div></div>
         </div>
+        <div class="panel" id="dataIntegrityPanel"><h3>Data checks</h3><p id="dataIntegritySummary" class="muted">Waiting for complete Google Sheets data…</p></div>
         <div class="panel activity-panel"><h3>Recent activity</h3><div id="activityList"></div></div>
       </section>
     </main>
@@ -250,6 +272,20 @@
       <div id="archivesList" class="member-manager-list"></div>
       <div class="modal-actions"><button type="button" class="secondary-btn" data-close="archivesDialog" data-icon="close" title="Close" aria-label="Close"></button></div>
     </div>
+  </dialog>
+
+  <!-- The registration form waits for a confirmed server receipt, with an animated overlay. -->
+  <dialog id="registrationDialog" class="modal" aria-labelledby="registrationDialogTitle">
+    <form id="registrationForm" class="modal-card">
+      <div class="modal-title"><div><p class="eyebrow">ATTENDANCE</p><h2 id="registrationDialogTitle">Register participant</h2></div><button type="button" class="close-btn" data-close="registrationDialog" aria-label="Cancel registration">×</button></div>
+      <label class="field"><span>Participant / family name</span><input id="registrationName" name="name" maxlength="120" autocomplete="off" required placeholder="Full name or family name"></label>
+      <label class="field"><span>Registration type</span><select id="registrationType" required><option>Family</option><option>Working Adult</option><option>Non-Working Adult</option><option>Youth</option><option>Kids</option><option>Visitors</option></select></label>
+      <label class="field"><span>Number of attendees (Family only)</span><input id="registrationAttendees" type="number" inputmode="numeric" min="1" max="100" value="1" disabled required></label>
+      <label class="field"><span>Notes (optional)</span><textarea id="registrationNotes" maxlength="350" rows="3" placeholder="Additional details (avoid phone numbers or sensitive information)"></textarea></label>
+      <p class="muted">One registration for each person; Family entries may cover multiple attendees. Entries are recorded with the registrar's name and date.</p>
+      <p id="registrationError" class="form-error" role="alert"></p><button id="registrationRetryBtn" type="button" class="secondary-btn hidden">Close and retry Sync</button>
+      <div class="modal-actions"><button type="button" class="secondary-btn" data-close="registrationDialog" data-icon="close" title="Cancel registration" aria-label="Cancel registration"></button><button type="submit" class="primary-btn" data-icon="check" title="Save registration" aria-label="Save registration">Save registration</button></div>
+    </form>
   </dialog>
 
   <!-- Confirmation dialog: prevents accidental deletion -->
@@ -312,8 +348,8 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="assets/js/api.js?v=2.7"></script>
-  <script src="assets/js/app.js?v=2.7"></script>
+  <script src="assets/js/api.js?v=2.9"></script>
+  <script src="assets/js/app.js?v=2.9"></script>
   <script src="assets/js/hero-animation.js?v=2.8" defer></script>
 </body>
 </html>
