@@ -1,3 +1,6 @@
+
+> **v2.9.2 fast registration:** Add participants rapidly using **Add & Next**. Entries queue instantly and sync to Sheets in batches (up to 20 per request) in the background. For setup and privacy cautions see [RELEASE-v2.9.2-BATCH-REGISTRATION.md](RELEASE-v2.9.2-BATCH-REGISTRATION.md). Update and redeploy Apps Script first.
+
 > **Current release: v2.9**. See [RELEASE-v2.9.md](RELEASE-v2.9.md) for the required backend upgrade, persistent login and the new Registration sheet.
 
 # Pasko ng Angkan 2026 — v2.6

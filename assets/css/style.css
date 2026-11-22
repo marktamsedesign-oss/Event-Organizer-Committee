@@ -227,3 +227,11 @@ form.modal-card{isolation:isolate}
 @media(max-width:750px){.registration-breakdown{grid-template-columns:repeat(3,minmax(0,1fr))}.registration-type-stat{padding:8px 4px}.registration-type-stat strong{font-size:18px}.registration-totals{grid-template-columns:1fr 1fr}}
 @media(prefers-reduced-motion:reduce){.form-busy-spinner,.loading::before,.sync-btn.syncing .ui-icon,#saveState.saving::before{animation-duration:3s}}
 #dataIntegritySummary.data-warning{color:#a35b13;font-weight:600}
+
+/* v2.9.2 — instant registration and safe, visible background batch sync. */
+.registration-sync-label{display:inline-flex;margin-left:6px;border-radius:99px;padding:3px 8px;font-size:10px;font-weight:750;background:#eef3ff;color:#2c4f91;vertical-align:middle;white-space:nowrap}
+.registration-sync-label.saving{background:#e9f4ff;color:#1b5788}
+.registration-sync-label.failed{background:#fff1e7;color:#a44e11}
+.registration-actions{flex-wrap:wrap;gap:8px}
+.registration-actions .primary-btn{min-width:112px}
+@media(max-width:480px){.registration-actions .secondary-btn,.registration-actions .primary-btn{flex:1 1 110px}.registration-card{align-items:flex-start}.registration-sync-label{margin:4px 0}}

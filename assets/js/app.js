@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.9 persistent login, verified sync, registration. */
+/* Pasko ng Angkan 2026 — v2.9.2 fast batch registration & durable background sync. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -174,6 +174,8 @@ function clearSession(){
   state.user=null;state.token=null;sessionClear();clearSnapshot();
   state.bootstrap=null;state.committees=[];state.members=[];state.tasks=[];state.updates=[];
   state.finance=[];state.foodItems=[];state.registrations=[];state.activity=[];state.archivedCommittees=[];
+  // Never discard pending registration data when authentication changes. The
+  // queue stays tied to its original user in localStorage until confirmed.
   updateSaveState();
 }
 function setFormBusy(form,busy,message="Saving…"){
@@ -190,20 +192,133 @@ function setFormBusy(form,busy,message="Saving…"){
   form.setAttribute("aria-busy",String(!!busy));
 }
 const OUTBOX_KEY="pna_pending_outbox_v29";
+const REG_BATCH_LIMIT=20;
+const REG_BATCH_DEBOUNCE_MS=1800;
+let registrationBuffer=[], registrationFlushTimer=null;
+const isRegistrationJob=job=>["saveRegistration","saveRegistrationsBatch"].includes(job?.action);
+const jobWeight=job=>Math.max(1,Number(job?.count)||1);
+const registrationRecords=job=>job?.action==="saveRegistrationsBatch"
+  ? (Array.isArray(job.payload?.registrations)?job.payload.registrations:[])
+  : job?.action==="saveRegistration"&&job.payload?.registration?[job.payload.registration]:[];
+function markPendingRegistrations(){
+  if(!state.user)return;
+  const all=[...failedJobs.map(job=>({job,status:"failed"})),
+    ...(inflightJob?[{job:inflightJob,status:"saving"}]:[]),
+    ...writes.map(job=>({job,status:"queued"})),
+    ...registrationBuffer.map(job=>({job,status:"queued"}))];
+  for(const {job,status} of all){
+    if(!isRegistrationJob(job)||job.userId!==state.user.id)continue;
+    for(const rec of registrationRecords(job)){
+      if(!rec?.id)continue;
+      let current=state.registrations.find(r=>r.id===rec.id);
+      const fields={...rec,active:true,registeredBy:current?.registeredBy||state.user.id,
+        registeredByName:current?.registeredByName||state.user.name,
+        createdAt:current?.createdAt||new Date().toISOString(),_syncState:status};
+      if(current)Object.assign(current,fields);else state.registrations.push(fields);
+    }
+  }
+}
+function scheduleRegistrationFlush(delay=REG_BATCH_DEBOUNCE_MS){
+  if(registrationFlushTimer)clearTimeout(registrationFlushTimer);
+  if(!registrationBuffer.length)return;
+  registrationFlushTimer=setTimeout(()=>{registrationFlushTimer=null;flushRegistrationBuffer()},delay);
+}
+function queueRegistrationWrite(record){
+  if(!state.token||!state.user){toast("Sign in to register participants.");return false;}
+  if(state.bootstrap?.capabilities?.registrationBatch!==true){
+    toast("Batch registration needs the updated v2.9.2 Apps Script deployment.");
+    return false;
+  }
+  // A second edit to the same not-yet-sent registration replaces its payload.
+  const buffered=registrationBuffer.find(job=>job.payload?.registration?.id===record.id);
+  const oldBufferedRecord=buffered?{...buffered.payload.registration}:null;
+  if(buffered)buffered.payload.registration={...record};
+  else{
+    registrationBuffer.push({action:"saveRegistration",payload:{registration:{...record}},
+      token:state.token,userId:state.user.id,
+      requestId:"req_"+Date.now()+"_"+Math.random().toString(36).slice(2,11)});
+    pendingWrites++;
+  }
+  // A local disk write is required BEFORE displaying an optimistic save.
+  // Otherwise closing a tab during an offline interval could lose the record.
+  if(!persistOutbox()){
+    if(buffered)buffered.payload.registration=oldBufferedRecord;
+    else{registrationBuffer.pop();pendingWrites--;}
+    toast("Browser storage unavailable. Registration was NOT queued; enable site storage and try again.");
+    return false;
+  }
+  changeVersion++;
+  const old=state.registrations.find(r=>r.id===record.id);
+  if(old)Object.assign(old,record,{active:true,_syncState:"queued"});
+  else state.registrations.push({...record,active:true,registeredBy:state.user.id,
+    registeredByName:state.user.name,createdAt:new Date().toISOString(),_syncState:"queued"});
+  updateSaveState();renderRegistration();
+  if(registrationBuffer.length>=REG_BATCH_LIMIT)flushRegistrationBuffer();
+  else scheduleRegistrationFlush();
+  return true;
+}
+function flushRegistrationBuffer(){
+  if(registrationFlushTimer){clearTimeout(registrationFlushTimer);registrationFlushTimer=null;}
+  if(!registrationBuffer.length)return;
+  if(!state.user || registrationBuffer.some(j=>j.userId!==state.user.id)){
+    toast("Pending registrations belong to another sign-in. Reconnect that user to sync them.");
+    return;
+  }
+  const originalBuffer=registrationBuffer.slice();
+  let addedJobs=0;
+  while(registrationBuffer.length){
+    const batch=registrationBuffer.splice(0,REG_BATCH_LIMIT);
+    // The batch ID is persisted BEFORE sending and reused on retry.
+    writes.push({action:"saveRegistrationsBatch",payload:{registrations:batch.map(j=>j.payload.registration)},
+      requestId:"req_"+Date.now()+"_"+Math.random().toString(36).slice(2,11),
+      token:batch[0].token,userId:batch[0].userId,count:batch.length});
+    addedJobs++;
+  }
+  if(!persistOutbox()){
+    writes.splice(-addedJobs,addedJobs);registrationBuffer=originalBuffer;
+    toast("Cannot store batch safely on this device. Registrations remain queued; free browser storage and Sync again.");
+    updateSaveState();return;
+  }
+  updateSaveState();
+  Promise.resolve().then(drainWrites);
+}
+function retryFailedRegistrationWrites({showToast=false}={}){
+  if(writing||!state.token||navigator.onLine===false)return false;
+  const retry=failedJobs.filter(j=>isRegistrationJob(j)&&j.userId===state.user?.id&&!j.permanentError);
+  if(!retry.length)return false;
+  failedJobs=failedJobs.filter(j=>!retry.includes(j));
+  pendingWrites+=retry.reduce((n,j)=>n+jobWeight(j),0);
+  writes.unshift(...retry);
+  persistOutbox();updateSaveState();markPendingRegistrations();renderRegistration();
+  if(showToast)toast(`Retrying ${retry.reduce((n,j)=>n+jobWeight(j),0)} registration(s)…`);
+  Promise.resolve().then(drainWrites);
+  return true;
+}
 function persistOutbox(){
   try{
-    const all=[...failedJobs,...(inflightJob?[inflightJob]:[]),...writes].map(job=>({action:job.action,payload:job.payload,requestId:job.requestId,userId:job.userId||state.user?.id}));
+    const all=[...failedJobs,...(inflightJob?[inflightJob]:[]),...writes,...registrationBuffer]
+      .map(job=>({action:job.action,payload:job.payload,requestId:job.requestId,
+        userId:job.userId||state.user?.id,count:job.count||1,
+        permanentError:!!job.permanentError}));
     localStorage.setItem(OUTBOX_KEY,JSON.stringify(all));
-  }catch{/* Browser may block storage; the unsynced indicator still protects navigation. */}
+    return true;
+  }catch{return false;}
 }
 function restoreOutbox(){
   try{
     const all=JSON.parse(localStorage.getItem(OUTBOX_KEY)||"[]");
     if(!Array.isArray(all)||!state.user||!state.token)return;
-    const mine=all.filter(j=>j.userId===state.user.id&&j.action&&j.requestId);
+    const unique=new Set();
+    const mine=all.filter(j=>j.userId===state.user.id&&j.action&&j.requestId)
+      .filter(j=>{if(unique.has(j.requestId))return false;unique.add(j.requestId);return true;});
     if(mine.length){
-      failedJobs.push(...mine.map(j=>({...j,token:state.token,error:"Restored pending save from this device"})));
-      toast(`${mine.length} unsynced change(s) restored. Press Sync to retry.`);
+      for(const j of mine){
+        const job={...j,token:state.token,error:"Pending save recovered from this device"};
+        if(j.action==="saveRegistration"){
+          registrationBuffer.push(job);pendingWrites+=1;
+        }else failedJobs.push(job);
+      }
+      toast(`${mine.reduce((n,j)=>n+jobWeight(j),0)} queued change(s) recovered. Sync will resume automatically.`);
       updateSaveState();
     }
   }catch{}
@@ -214,12 +329,13 @@ function restoreOutbox(){
 // a manual retry idempotent even if a prior confirmation was lost.
 let pendingWrites=0, writing=false, writes=[],failedJobs=[],inflightJob=null,changeVersion=0;
 let lastRefreshAt=0, refreshing=false;
-function unsyncedCount(){return pendingWrites+failedJobs.length;}
+function unsyncedCount(){return pendingWrites+failedJobs.reduce((n,j)=>n+jobWeight(j),0);}
 function updateSaveState(){
   const el=$("#saveState"),btn=$("#syncRefreshBtn"),badge=$("#syncCount");
   if(!el||!btn||!badge)return;
   const total=unsyncedCount();
-  const label=failedJobs.length?`${failedJobs.length} need sync`:(pendingWrites?`Saving ${pendingWrites}…`:refreshing?"Refreshing…":"All changes saved");
+  const failedCount=failedJobs.reduce((n,j)=>n+jobWeight(j),0);
+  const label=failedCount?`${failedCount} need sync`:(pendingWrites?`${pendingWrites} queued / syncing…`:refreshing?"Refreshing…":"All changes saved");
   el.textContent=label;
   el.classList.toggle("saving",(pendingWrites>0||refreshing)&&!failedJobs.length);
   el.classList.toggle("save-error",failedJobs.length>0);
@@ -230,7 +346,7 @@ function updateSaveState(){
   btn.classList.toggle("sync-failed",failedJobs.length>0);
   btn.classList.toggle("syncing",pendingWrites>0||refreshing);
   btn.setAttribute("aria-label",total?`Sync ${total} pending change(s) and refresh`:"Refresh and sync with Google Sheets");
-  btn.title=failedJobs.length?`Retry ${failedJobs.length} unconfirmed change(s) and refresh`:pendingWrites?`${pendingWrites} saving · data will refresh after sync`:refreshing?"Fetching latest data…":"Refresh latest data and sync pending edits";
+  btn.title=failedCount?`Retry ${failedCount} unconfirmed change(s) and refresh`:pendingWrites?`${pendingWrites} queued/syncing · data refreshes after confirmation`:refreshing?"Fetching latest data…":"Refresh latest data and sync pending edits";
 }
 function queueWrite(action,payload,optimistic,{awaitConfirmation=false}={}){
   if(!state.token){toast("Sign in to make changes.");return awaitConfirmation?Promise.reject(new Error("Please sign in.")):false;}
@@ -253,7 +369,12 @@ async function drainWrites(){
   try{
     while(writes.length){
       const job=writes.shift();
-      inflightJob=job;persistOutbox();
+      inflightJob=job;
+      if(!persistOutbox()){
+        inflightJob=null;writes.unshift(job);
+        toast("Browser storage unavailable. Changes remain queued; enable site storage before syncing.");
+        break;
+      }
       try{
         const result=await Api.request(job.action,{...job.payload,token:job.token},job.requestId);
         if(!result?.ok)throw new Error(result?.error||"Server rejected the change.");
@@ -261,13 +382,31 @@ async function drainWrites(){
           if(!state.bootstrap.users.some(u=>u.id===result.user.id))state.bootstrap.users.push(result.user);
           renderLoginUsers();
         }
+        if(isRegistrationJob(job)){
+          for(const rec of registrationRecords(job)){
+            const pending=registrationBuffer.some(j=>registrationRecords(j).some(r=>r.id===rec.id))||
+              writes.some(j=>registrationRecords(j).some(r=>r.id===rec.id))||
+              failedJobs.some(j=>registrationRecords(j).some(r=>r.id===rec.id));
+            const current=state.registrations.find(r=>r.id===rec.id);
+            if(current&&!pending){delete current._syncState;current._everConfirmed=true;}
+          }
+          renderRegistration();
+        }
         if(job.resolve)job.resolve(result);
       }catch(error){
-        failedJobs.push({...job,error:error.message,resolve:undefined,reject:undefined});
+        const permanentError=/Registration details|Enter participant|Choose a registration type|Attendee count|Only Family registrations|Notes must be|Only the original registrar|Registration not found|SESSION_INVALID/.test(error.message);
+        failedJobs.push({...job,error:error.message,permanentError,resolve:undefined,reject:undefined});
+        if(isRegistrationJob(job)){
+          for(const rec of registrationRecords(job)){
+            const row=state.registrations.find(r=>r.id===rec.id);
+            if(row)row._syncState="failed";
+          }
+          renderRegistration();
+        }
         if(job.reject)job.reject(error);
-        toast("Not synced: "+error.message+". Press Sync & Refresh to retry.");
+        toast("Not synced: "+error.message+". Press Sync to retry safely.");
       }finally{
-        pendingWrites--;inflightJob=null;persistOutbox();updateSaveState();
+        pendingWrites-=jobWeight(job);inflightJob=null;persistOutbox();updateSaveState();
       }
     }
   }finally{
@@ -298,13 +437,14 @@ async function refreshLatest({includeBootstrap=false,silent=false}={}){
 }
 async function manualSyncRefresh(){
   if(refreshing){toast("Already refreshing; your current view is staying open.");return;}
-  if(pendingWrites||writing){toast("Changes are saving; the latest data will load once saved.");return;}
+  if(registrationBuffer.length)flushRegistrationBuffer();
+  if(pendingWrites||writing){toast("Queued registrations are syncing in the background. You can keep registering.");return;}
   if(failedJobs.length){
     const retry=failedJobs.splice(0);
-    pendingWrites+=retry.length;
+    pendingWrites+=retry.reduce((n,j)=>n+jobWeight(j),0);
     writes.unshift(...retry);
     persistOutbox();updateSaveState();
-    toast(`Retrying ${retry.length} change${retry.length===1?"":"s"} and refreshing after confirmation…`);
+    toast(`Retrying ${retry.reduce((n,j)=>n+jobWeight(j),0)} change(s) and refreshing afterward…`);
     Promise.resolve().then(drainWrites);
     return;
   }
@@ -323,7 +463,15 @@ async function init(){
   bindEvents();
   preventAccidentalZoom();
   updateSaveState();
-  setInterval(()=>{if(Date.now()-lastRefreshAt>30000)backgroundRefresh()},30000);
+  setInterval(()=>{
+    if(registrationBuffer.length&&!registrationFlushTimer)flushRegistrationBuffer();
+    if(failedJobs.some(isRegistrationJob))retryFailedRegistrationWrites();
+    if(Date.now()-lastRefreshAt>30000)backgroundRefresh();
+  },60000);
+  window.addEventListener("online",()=>{
+    if(registrationBuffer.length)flushRegistrationBuffer();
+    retryFailedRegistrationWrites({showToast:true});
+  });
   document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&Date.now()-lastRefreshAt>30000)backgroundRefresh()});
   window.addEventListener("beforeunload",event=>{if(unsyncedCount()){event.preventDefault();event.returnValue=""}});
   let showedCache=false;
@@ -347,9 +495,12 @@ async function init(){
     // when a cached view is immediately displayed in the meantime.
     await loadBootstrap({preserveView:showedCache});
     if(state.token){
-      if(failedJobs.length){
-        setConnection("Pending saves recovered · tap Sync to complete them");
-        if(showedCache)renderAll();
+      if(failedJobs.length||registrationBuffer.length){
+        // Load the latest CONFIRMED Sheets records even with pending local
+        // registrations, then overlay queued entries so nothing disappears.
+        await verifiedRefreshWithRetry(3,{allowPending:true});
+        if(registrationBuffer.length)scheduleRegistrationFlush(500);
+        if(failedJobs.some(isRegistrationJob))setTimeout(()=>retryFailedRegistrationWrites(),1200);
         return;
       }
       await verifiedRefreshWithRetry();return;
@@ -412,31 +563,35 @@ function validateFullSnapshot(result){
   }
   return true;
 }
-async function refreshData(){
+async function refreshData({allowPending=false}={}){
   if(!state.token){await loadBootstrap();renderAll();return true}
-  if(unsyncedCount())return false;
+  if(unsyncedCount()&&!allowPending)return false;
   const version=changeVersion,token=state.token;
   const result=await api("getData");
   if(!result?.ok)throw new Error(result?.error||"Could not load event records");
   validateFullSnapshot(result);
   // Commit ONE complete snapshot at a time, never a partial list or stale read.
-  if(version!==changeVersion||token!==state.token||unsyncedCount())return false;
+  if(version!==changeVersion||token!==state.token||(!allowPending&&unsyncedCount()))return false;
   const fields=["committees","members","tasks","updates","activity","finance","foodItems","registrations","archivedCommittees"];
   for(const field of fields)state[field]=result[field];
+  state.registrations.forEach(r=>r._everConfirmed=true);
   if(state.bootstrap){
     state.bootstrap.members=state.members;state.bootstrap.committees=state.committees;
     state.bootstrap.users=result.users;
     renderLoginUsers();
   }
   lastRefreshAt=Date.now();
-  saveConfirmedSnapshot();
-  setConnection(`Synced · ${state.user.name}`,true);renderAll();return true;
+  // Never cache unconfirmed optimistic records as confirmed sheet data.
+  if(allowPending&&unsyncedCount())markPendingRegistrations();
+  else saveConfirmedSnapshot();
+  setConnection(unsyncedCount()?`Live records loaded · ${unsyncedCount()} queued / unsynced`:`Synced · ${state.user.name}`,!unsyncedCount());
+  renderAll();return true;
 }
-async function verifiedRefreshWithRetry(attempts=3){
+async function verifiedRefreshWithRetry(attempts=3,options={}){
   let error;
   for(let i=0;i<attempts;i++){
     if(i)await new Promise(resolve=>setTimeout(resolve,750*i));
-    try{return await refreshData();}catch(err){
+    try{return await refreshData(options);}catch(err){
       error=err;if(/SESSION_INVALID|Backend version mismatch/.test(String(err.message)))break;
     }
   }
@@ -504,7 +659,6 @@ function bindEvents(){
   $("#registrationSearch").oninput=renderRegistration;
   $("#registrationTypeFilter").onchange=renderRegistration;
   $("#registrationForm").onsubmit=saveRegistrationForm;
-  $("#registrationRetryBtn").onclick=()=>{$("#registrationDialog").close();manualSyncRefresh()};
   $("#registrationAttendees").addEventListener("input",()=>{});
   $("#registrationType").onchange=()=>{
     const isFamily=$("#registrationType").value==="Family";
@@ -938,60 +1092,78 @@ function renderRegistration(){
   const visible=rows.filter(r=>(!type||r.registrationType===type)&&(!query||[r.name,r.registrationType,r.notes].some(x=>String(x||"").toLocaleLowerCase().includes(query))));
   list.innerHTML=visible.length?visible.sort((a,b)=>String(a.name).localeCompare(String(b.name),"en-PH")).map(r=>{
     const controls=canEditRegistration(r)?`<div class="registration-row-actions">${iconAction("edit-registration",r.id,"Edit registration","pencil")}${iconAction("archive-registration",r.id,"Remove registration","trash")}</div>`:"";
-    return `<article class="registration-card"><div><strong>${esc(r.name)}</strong><p class="muted">${esc(r.registrationType)}${Number(r.attendeeCount)>1?` · ${Number(r.attendeeCount)} attendees`:""}</p>${r.notes?`<p class="registration-notes">${esc(r.notes)}</p>`:""}<small class="muted">Registered by ${esc(r.registeredByName||"Unknown")} · ${esc(r.createdAt||"")}</small></div>${controls}</article>`;
+    const status=r._syncState?`<span class="registration-sync-label ${r._syncState}" role="status">${r._syncState==="failed"?"⚠ Needs sync":r._syncState==="saving"?"↻ Syncing…":"◷ Queued"}</span>`:"";
+    return `<article class="registration-card"><div><strong>${esc(r.name)}</strong> ${status}<p class="muted">${esc(r.registrationType)}${Number(r.attendeeCount)>1?` · ${Number(r.attendeeCount)} attendees`:""}</p>${r.notes?`<p class="registration-notes">${esc(r.notes)}</p>`:""}<small class="muted">Registered by ${esc(r.registeredByName||"Unknown")} · ${esc(r.createdAt||"")}</small></div>${controls}</article>`;
   }).join(""):'<div class="empty-state">No matching registrations yet.</div>';
   list.querySelectorAll(".edit-registration").forEach(b=>b.onclick=()=>openRegistrationEditor(rows.find(r=>r.id===b.dataset.id)));
   list.querySelectorAll(".archive-registration").forEach(b=>b.onclick=async()=>{
     const row=rows.find(r=>r.id===b.dataset.id);
     if(!row||!await confirmAction(`Remove ${row.name} from the active registration list? The record stays in Sheets.`))return;
+    // A queued unsent registration can be cancelled locally without creating
+    // an unnecessary add-then-delete race in Google Sheets.
+    if(failedJobs.some(j=>registrationRecords(j).some(r=>r.id===row.id))){
+      toast("Sync this unconfirmed registration before removing it.");return;
+    }
+    const buffered=registrationBuffer.find(j=>j.payload?.registration?.id===row.id);
+    if(buffered){
+      registrationBuffer=registrationBuffer.filter(j=>j!==buffered);
+      pendingWrites--;changeVersion++;
+      if(registrationFlushTimer&&!registrationBuffer.length){clearTimeout(registrationFlushTimer);registrationFlushTimer=null;}
+      const serverRow=state.registrations.find(r=>r.id===row.id);
+      if(serverRow&&String(serverRow.id).startsWith("WEB-")&&!row._everConfirmed){
+        state.registrations=state.registrations.filter(r=>r.id!==row.id);
+        persistOutbox();updateSaveState();renderRegistration();return;
+      }
+      // Existing records may still exist on the server; archive them.
+    }
     queueWrite("deleteRegistration",{id:row.id},()=>{row.active=false});
   });
 }
 function openRegistrationEditor(item=null){
   if(!state.user)return openLogin();
   if(item&&!canEditRegistration(item))return toast("Only the registrar or Directors can edit this entry.");
+  if(item?._syncState==="failed")return toast("Retry Sync before editing this unconfirmed registration.");
   const form=$("#registrationForm");
   form.dataset.recordId=item?.id||"";
   form.dataset.needsSync="false";
-  $("#registrationDialogTitle").textContent=item?"Edit registration":"Register participant";
+  $("#registrationDialogTitle").textContent=item?"Edit registration":"Quick registration";
+  $("#registrationNextBtn").classList.toggle("hidden",!!item);
+  $("#registrationSaveCloseBtn").textContent=item?"Save changes":"Save & Close";
   $("#registrationName").value=item?.name||"";
   $("#registrationType").value=item?.registrationType||"Working Adult";
   $("#registrationAttendees").value=String(item?.attendeeCount||1);
   $("#registrationAttendees").disabled=$("#registrationType").value!=="Family";
   $("#registrationNotes").value=item?.notes||"";
   $("#registrationError").textContent="";
-  $("#registrationRetryBtn").classList.add("hidden");
   setFormBusy(form,false);
   if(!$("#registrationDialog").open)$("#registrationDialog").showModal();
 }
-async function saveRegistrationForm(event){
-  event.preventDefault();const form=event.target;
-  if(form.classList.contains("is-busy"))return;
-  if(form.dataset.needsSync==="true"){
-    $("#registrationError").textContent="This registration is awaiting confirmation. Use Close and retry Sync; do not submit it twice.";
-    return;
-  }
+function saveRegistrationForm(event){
+  event.preventDefault();
+  const form=event.target;
+  if(!state.user||!state.token){openLogin();return;}
   const old=state.registrations.find(r=>r.id===form.dataset.recordId);
   const record={id:old?.id||localId(),name:$("#registrationName").value.trim(),
     registrationType:$("#registrationType").value,attendeeCount:Number($("#registrationAttendees").value||1),
     notes:$("#registrationNotes").value.trim()};
-  if(!record.name){$("#registrationError").textContent="Please enter a name.";return;}
+  const error=$("#registrationError");error.textContent="";
+  if(!record.name||record.name.length>120){error.textContent="Enter a name (up to 120 characters).";return;}
+  if(!REGISTRATION_TYPES.includes(record.registrationType)){error.textContent="Choose a registration type.";return;}
   if(record.registrationType!=="Family")record.attendeeCount=1;
-  setFormBusy(form,true,"Saving registration in Google Sheets…");
-  $("#registrationError").textContent="";
-  try{
-    await queueWrite("saveRegistration",{registration:record},()=>{
-      if(old)Object.assign(old,{...record,active:true});
-      else state.registrations.push({...record,active:true,registeredBy:state.user.id,registeredByName:state.user.name,createdAt:new Date().toISOString()});
-    },{awaitConfirmation:true});
-    $("#registrationDialog").close();
-    toast(old?"Registration updated.":"Registration saved successfully.");
-  }catch(err){
-    form.dataset.needsSync="true";
-    $("#registrationRetryBtn").classList.remove("hidden");
-    $("#registrationError").textContent="Save is not confirmed. Close and retry Sync using the same request (no duplicate registration).";
-    setConnection("Registration save needs Sync");
-  }finally{setFormBusy(form,false)}
+  if(!Number.isInteger(record.attendeeCount)||record.attendeeCount<1||record.attendeeCount>100){error.textContent="Family attendees must be 1–100.";return;}
+  if(record.notes.length>350){error.textContent="Notes must be 350 characters or less.";return;}
+  if(!queueRegistrationWrite(record))return;
+  const close=old||event.submitter?.id==="registrationSaveCloseBtn";
+  if(close){$("#registrationDialog").close();}
+  else{
+    // Keep the form open and ready for the next person without waiting for Sheets.
+    // Retain the selected category to reduce repetitive data entry.
+    $("#registrationName").value="";
+    $("#registrationNotes").value="";
+    $("#registrationAttendees").value="1";
+    $("#registrationName").focus();
+  }
+  toast(`Queued: ${record.name}. ${unsyncedCount()} change(s) pending background sync.`);
 }
 
 function renderReports(){
