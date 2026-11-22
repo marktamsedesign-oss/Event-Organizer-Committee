@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.9.6 contextual dashboard and finance payables. */
+/* Pasko ng Angkan 2026 — v2.9.7 Finance scorecard ordering. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -1071,7 +1071,7 @@ function renderSummary(){
   const definitions={
     committees:[["Committees",state.committees.length],["Total tasks",tasks.length],["Completed",done],["Needs attention",tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length]],
     tasks:[["Total tasks",tasks.length],["Completed",done],["Pending",tasks.filter(t=>t.status==="Pending").length],["Blocked",tasks.filter(t=>t.status==="Blocked").length]],
-    finance:[["Collection",finance?money(finance.collection):"—"],["Total Funds",finance?money(finance.totalFunds):"—"],["Expenses",finance?money(finance.expenses):"—"],["Cash Available",finance?money(finance.availableCash):"—"],["Payables",finance?money(finance.payables):"—"]],
+    finance:[["Total Funds",finance?money(finance.totalFunds):"—"],["Cash Available",finance?money(finance.availableCash):"—"],["Collections",finance?money(finance.collection):"—"],["Expenses",finance?money(finance.expenses):"—"],["Payables",finance?money(finance.payables):"—"]],
     food:[["Food items",state.foodItems.length],["Ready",foodDone],["To do",state.foodItems.length-foodDone],["Progress",state.foodItems.length?Math.round(foodDone*100/state.foodItems.length)+"%":"0%"]],
     registration:[["Registrations",registration.length],["Attendees",registration.reduce((n,r)=>n+(Number(r.attendeeCount)||1),0)],["Still due",finance?money(finance.registrationOutstanding):"—"],["Collected",finance?money(finance.registrationCollected):"—"]],
     reports:[["Committees",state.committees.length],["Overall progress",tasks.length?Math.round(done*100/tasks.length)+"%":"0%"],["Completed",done],["Needs attention",tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length]]
