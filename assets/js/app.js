@@ -1,8 +1,8 @@
-/* Pasko ng Angkan 2026 — v2.9.4 independent people directory loading + diagnostics. */
+/* Pasko ng Angkan 2026 — v2.9.6 contextual dashboard and finance payables. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
-  activity:[],finance:[],foodItems:[],registrations:[],archivedCommittees:[],activeTab:"committees",managingCommitteeId:null
+  activity:[],finance:[],financeCollections:[],financePayouts:[],registrationPayments:[],foodItems:[],registrations:[],archivedCommittees:[],activeTab:"committees",managingCommitteeId:null
 };
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -17,7 +17,11 @@ function sessionClear(){try{localStorage.removeItem("pna_session")}catch{/* alre
 // The last *verified* read is kept across reloads in this browser. New or
 // incomplete responses are never allowed to replace it. This cache includes
 // participant names: use Sign out on a shared device to clear the local copy.
-const SNAPSHOT_KEY="pna_confirmed_snapshot_v293";
+const SNAPSHOT_KEY="pna_confirmed_snapshot_v296_payables";
+const V295_SNAPSHOT_KEY="pna_confirmed_snapshot_v295_registration";
+const PREVIOUS_SNAPSHOT_KEY="pna_confirmed_snapshot_v295";
+const OLDER_SNAPSHOT_KEY="pna_confirmed_snapshot_v293";
+let financeLedgerVerified=false;
 const DIRECTORY_KEY="pna_verified_directory_v294";
 const LEGACY_SNAPSHOT_KEY="pna_confirmed_snapshot_v24";
 const TAB_KEY="pna_active_tab_v24";
@@ -66,14 +70,14 @@ function readTab(){try{return sessionStorage.getItem(TAB_KEY)||"committees"}catc
 function cacheTab(tab){try{sessionStorage.setItem(TAB_KEY,tab)}catch{}}
 function clearSnapshot(){
   for(const store of [localStorage,sessionStorage]){
-    for(const key of [SNAPSHOT_KEY,LEGACY_SNAPSHOT_KEY,DIRECTORY_KEY])try{store.removeItem(key)}catch{}
+    for(const key of [SNAPSHOT_KEY,V295_SNAPSHOT_KEY,PREVIOUS_SNAPSHOT_KEY,OLDER_SNAPSHOT_KEY,LEGACY_SNAPSHOT_KEY,DIRECTORY_KEY])try{store.removeItem(key)}catch{}
   }
-  fullSnapshotLoaded=false;verifiedDirectory=null;
+  fullSnapshotLoaded=false;verifiedDirectory=null;financeLedgerVerified=false;
 }
 function restoreSnapshot(userId){
   try{
     const snapshots=[];
-    for(const store of [localStorage,sessionStorage])for(const key of [SNAPSHOT_KEY,LEGACY_SNAPSHOT_KEY]){
+    for(const store of [localStorage,sessionStorage])for(const key of [SNAPSHOT_KEY,V295_SNAPSHOT_KEY,PREVIOUS_SNAPSHOT_KEY,OLDER_SNAPSHOT_KEY,LEGACY_SNAPSHOT_KEY]){
       try{const raw=store.getItem(key);if(raw)snapshots.push(JSON.parse(raw))}catch{}
     }
     snapshots.sort((a,b)=>Number(b?.savedAt||0)-Number(a?.savedAt||0));
@@ -86,6 +90,10 @@ function restoreSnapshot(userId){
     if(!snap)return false;
     state.bootstrap=snap.bootstrap;
     ["committees","members","tasks","updates","finance","foodItems","registrations","activity","archivedCommittees"].forEach(field=>state[field]=snap[field]);
+    state.financeCollections=Array.isArray(snap.financeCollections)?snap.financeCollections:[];
+    state.financePayouts=Array.isArray(snap.financePayouts)?snap.financePayouts:[];
+    state.registrationPayments=Array.isArray(snap.registrationPayments)?snap.registrationPayments:[];
+    financeLedgerVerified=Array.isArray(snap.financeCollections)&&Array.isArray(snap.registrationPayments)&&Array.isArray(snap.financePayouts);
     const tab=readTab();state.activeTab=["committees","tasks","finance","food","registration","reports"].includes(tab)?tab:"committees";
     lastConfirmedAt=snap.savedAt;fullSnapshotLoaded=true;directoryLoading=false;directoryError="";
     setVerifiedDirectory({users:snap.bootstrap.users,committees:snap.committees,members:snap.members},{persist:false});
@@ -100,7 +108,7 @@ function saveConfirmedSnapshot(){
     userId:state.user.id,savedAt:lastConfirmedAt,
     bootstrap:{ok:true,apiVersion:29,event:state.bootstrap.event,users:state.bootstrap.users,committees:state.committees,members:state.members},
     committees:state.committees,members:state.members,tasks:state.tasks,updates:state.updates,
-    finance:state.finance,foodItems:state.foodItems,registrations:state.registrations,activity:state.activity,
+    finance:state.finance,financeCollections:state.financeCollections,financePayouts:state.financePayouts,registrationPayments:state.registrationPayments,foodItems:state.foodItems,registrations:state.registrations,activity:state.activity,
     archivedCommittees:state.archivedCommittees
   };
   try{localStorage.setItem(SNAPSHOT_KEY,JSON.stringify(snapshot))}
@@ -132,6 +140,8 @@ function preventAccidentalZoom(){
 // Local, self-contained outline icons (no external dependency or CDN).
 const ICON_PATHS={
   plus:'<path d="M12 5v14M5 12h14"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/>',
+  receipt:'<path d="M5 3h14v18l-3-2-4 2-4-2-3 2V3zM8 8h8M8 12h8"/>',
   menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
   copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   'list-todo':'<path d="M9 5h12M9 12h12M9 19h12M3 5l1.7 1.7L7 3.7M3 12l1.7 1.7L7 10.7M3 19l1.7 1.7L7 17.7"/>',
@@ -155,6 +165,7 @@ const ICON_PATHS={
   activity:'<path d="M4 12h3l3-8 4 16 3-8h3"/>',
   flag:'<path d="M4 21V4m0 1c5-3 8 3 16 0v11c-8 3-11-3-16 0"/>',
   clipboard:'<rect x="8" y="4" width="13" height="18" rx="2"/><path d="M8 8H5a2 2 0 0 0-2 2v10M11 4V2h7v2"/>',
+  filter:'<path d="M4 7h16M7 12h10M10 17h4"/><circle cx="9" cy="7" r="2" fill="white"/><circle cx="15" cy="12" r="2" fill="white"/>',
   'sort-asc':'<path d="M4 6h10M4 11h7M4 16h4M18 5v14m-4-4 4 4 4-4"/>',
   'sort-desc':'<path d="M4 6h4M4 11h7M4 16h10M18 19V5m-4 4 4-4 4 4"/>'
 };
@@ -234,7 +245,7 @@ function assertApiV29(response){
 function clearSession(){
   state.user=null;state.token=null;sessionClear();clearSnapshot();
   state.bootstrap=null;state.committees=[];state.members=[];state.tasks=[];state.updates=[];
-  state.finance=[];state.foodItems=[];state.registrations=[];state.activity=[];state.archivedCommittees=[];
+  state.finance=[];state.financeCollections=[];state.financePayouts=[];state.registrationPayments=[];financeLedgerVerified=false;state.foodItems=[];state.registrations=[];state.activity=[];state.archivedCommittees=[];
   directoryLoading=false;directoryError="";
   // Never discard pending registration data when authentication changes. The
   // queue stays tied to its original user in localStorage until confirmed.
@@ -440,6 +451,24 @@ async function drainWrites(){
       try{
         const result=await Api.request(job.action,{...job.payload,token:job.token},job.requestId);
         if(!result?.ok)throw new Error(result?.error||"Server rejected the change.");
+        if((job.action==="receiveRegistration"||job.action==="reverseRegistrationPayment"||job.action==="deleteRegistration")&&result.payment){
+          const payment=result.payment;
+          const i=state.registrationPayments.findIndex(p=>p.id===payment.id);
+          if(i>=0)state.registrationPayments[i]={...payment};else state.registrationPayments.push(payment);
+          renderSummary();renderFinance();renderRegistration();
+        }
+        if((job.action==="receiveFinance"||job.action==="reverseFinanceReceipt")&&result.collection){
+          const rec=result.collection;
+          const index=state.financeCollections.findIndex(x=>x.id===rec.id);
+          if(index>=0)state.financeCollections[index]={...rec};else state.financeCollections.push(rec);
+          if(financeLedgerVerified){renderSummary();renderFinance();}
+        }
+        if((job.action==="releasePayable"||job.action==="reversePayableRelease")&&result.payout){
+          const payout=result.payout;
+          const index=state.financePayouts.findIndex(x=>x.id===payout.id);
+          if(index>=0)state.financePayouts[index]={...payout};else state.financePayouts.push(payout);
+          if(financeLedgerVerified){renderSummary();renderFinance()}
+        }
         if(job.action==="addUser"&&result.user&&state.bootstrap){
           if(!state.bootstrap.users.some(u=>u.id===result.user.id))state.bootstrap.users.push(result.user);
           renderLoginUsers();
@@ -634,6 +663,9 @@ function validateFullSnapshot(result){
     throw new Error(result?.error||"Sheet data is incomplete. Deploy the v2.9.3 Code.gs backend.");
   const required={Users:"users",Committees:"committees",CommitteeMembers:"members",
     Tasks:"tasks",TaskUpdates:"updates",ActivityLogs:"activity",FinanceEntries:"finance",
+    FinanceCollections:"financeCollections",
+    FinancePayouts:"financePayouts",
+    RegistrationPayments:"registrationPayments",
     FoodItems:"foodItems",Registrations:"registrations"};
   for(const [sheet,field] of Object.entries(required)){
     const raw=manifest[sheet],visible=manifest.visible[sheet],records=result[field];
@@ -660,8 +692,9 @@ async function refreshData({allowPending=false}={}){
   validateFullSnapshot(result);
   // Commit ONE complete snapshot at a time, never a partial list or stale read.
   if(version!==changeVersion||token!==state.token||(!allowPending&&unsyncedCount()))return false;
-  const fields=["committees","members","tasks","updates","activity","finance","foodItems","registrations","archivedCommittees"];
+  const fields=["committees","members","tasks","updates","activity","finance","financeCollections","financePayouts","registrationPayments","foodItems","registrations","archivedCommittees"];
   for(const field of fields)state[field]=result[field];
+  financeLedgerVerified=true;
   state.registrations.forEach(r=>r._everConfirmed=true);
   setVerifiedDirectory({users:result.users,committees:result.committees,members:result.members});
   lastRefreshAt=Date.now();
@@ -744,6 +777,14 @@ function bindEvents(){
   $("#addCommitteeBtn").onclick=()=>committeeEditor();
   $("#addTaskBtn").onclick=()=>taskEditor();
   $("#addFinanceBtn").onclick=()=>financeEditor();
+  $("#financeFilterToggle").onclick=()=>{
+    const el=$("#financeFilters");el.classList.toggle("is-collapsed");
+    $("#financeFilterToggle").setAttribute("aria-expanded",String(!el.classList.contains("is-collapsed")));
+  };
+  $$(".finance-filter").forEach(b=>b.onclick=()=>{
+    financeFilter=b.dataset.financeFilter;
+    renderFinance();
+  });
   $("#addFoodBtn").onclick=()=>foodEditor();
   $("#registerBtn").onclick=()=>openRegistrationEditor();
   $("#registrationSearch").oninput=renderRegistration;
@@ -771,6 +812,7 @@ function bindEvents(){
 }
 function switchTab(tab){
   state.activeTab=tab;cacheTab(tab);
+  renderSummary();
   $$(".tab").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));
   $$(".tab-panel").forEach(panel=>panel.classList.toggle("active",panel.id==="tab-"+tab));
 }
@@ -1021,11 +1063,22 @@ function renderMyAssignments(){
 }
 
 function renderSummary(){
+  const host=$("#summaryStrip");if(!host)return;
   const tasks=activeTasks(),done=tasks.filter(t=>t.status==="Completed").length;
-  $("#sumCommittees").textContent=state.committees.length;
-  $("#sumTasks").textContent=tasks.length;
-  $("#sumCompleted").textContent=done;
-  $("#sumPending").textContent=tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length;
+  const registration=state.registrations.filter(r=>active(r.active));
+  const foodDone=state.foodItems.filter(f=>f.status==="Done").length;
+  const finance=financeLedgerVerified?calculateFinance():null;
+  const definitions={
+    committees:[["Committees",state.committees.length],["Total tasks",tasks.length],["Completed",done],["Needs attention",tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length]],
+    tasks:[["Total tasks",tasks.length],["Completed",done],["Pending",tasks.filter(t=>t.status==="Pending").length],["Blocked",tasks.filter(t=>t.status==="Blocked").length]],
+    finance:[["Collection",finance?money(finance.collection):"—"],["Total Funds",finance?money(finance.totalFunds):"—"],["Expenses",finance?money(finance.expenses):"—"],["Cash Available",finance?money(finance.availableCash):"—"],["Payables",finance?money(finance.payables):"—"]],
+    food:[["Food items",state.foodItems.length],["Ready",foodDone],["To do",state.foodItems.length-foodDone],["Progress",state.foodItems.length?Math.round(foodDone*100/state.foodItems.length)+"%":"0%"]],
+    registration:[["Registrations",registration.length],["Attendees",registration.reduce((n,r)=>n+(Number(r.attendeeCount)||1),0)],["Still due",finance?money(finance.registrationOutstanding):"—"],["Collected",finance?money(finance.registrationCollected):"—"]],
+    reports:[["Committees",state.committees.length],["Overall progress",tasks.length?Math.round(done*100/tasks.length)+"%":"0%"],["Completed",done],["Needs attention",tasks.filter(t=>["Pending","Blocked"].includes(t.status)).length]]
+  };
+  host.classList.toggle("is-finance",state.activeTab==="finance");
+  host.innerHTML=(definitions[state.activeTab]||definitions.committees).map(([label,value])=>
+    `<article class="summary-card ${label==="Cash Available"?"accent-card":""}"><span>${esc(label)}</span><strong>${esc(value)}</strong></article>`).join("");
 }
 function renderCommittees(){
   const host=$("#committeeList");
@@ -1162,25 +1215,170 @@ function renderTasks(){
   $$(".edit-task").forEach(b=>b.onclick=()=>taskEditor(state.tasks.find(t=>t.id===b.dataset.id)));
   $$(".quick-complete").forEach(b=>b.onclick=()=>quickComplete(b.dataset.id));
 }
+let financeFilter="all";
+function calculateFinance(){return FinanceModel.calculate(state.finance,state.financeCollections,state.registrations,state.registrationPayments,state.financePayouts)}
+function financePayoutPending(id){return [...writes,...failedJobs,...(inflightJob?[inflightJob]:[])].some(j=>
+  ["releasePayable","reversePayableRelease"].includes(j.action)&&String(j.payload?.payableId)===String(id));}
+function financeReceiptPending(id){
+  const jobs=[...writes,...failedJobs,...(inflightJob?[inflightJob]:[])];
+  return jobs.some(j=>(j.action==="receiveFinance"||j.action==="reverseFinanceReceipt")&&
+    String(j.payload?.receivableId)===String(id));
+}
+function registrationPaymentPending(id){
+  return [...writes,...failedJobs,...(inflightJob?[inflightJob]:[])].some(j=>
+    ["receiveRegistration","reverseRegistrationPayment","deleteRegistration"].includes(j.action)&&
+    String(j.payload?.registrationId||j.payload?.id)===String(id));
+}
+async function receiveRegistrationClick(id){
+  if(!canEditFinance()||!financeLedgerVerified)return toast("Only Finance Heads or Directors can confirm payments after data sync.");
+  const row=state.registrations.find(r=>r.id===id&&active(r.active));
+  if(!row||row._syncState||registrationPaymentPending(id))return toast("This registration is still syncing. Try after confirmation.");
+  const calc=calculateFinance();
+  const amount=FinanceModel.registrationRate(row.registrationType);
+  if(!amount||calc.registrationPayments.has(String(id)))return;
+  if(!await confirmAction(`Confirm receipt of ${money(amount)} from ${row.name} (${row.registrationType})? This moves the amount from Receivables into Total Funds.`))return;
+  queueWrite("receiveRegistration",{registrationId:id,date:TODAY()},null);
+  toast("Recording received payment. It counts as collected after Google Sheets confirms it…");
+}
+async function reverseRegistrationClick(id){
+  if(!canEditFinance()||!financeLedgerVerified||registrationPaymentPending(id))return;
+  const row=state.registrations.find(r=>r.id===id),calc=calculateFinance();
+  const payment=calc.registrationPayments.get(String(id));if(!row||!payment)return;
+  if(!await confirmAction(`Undo ${money(payment.amount)} received from ${row.name}? This returns the amount to outstanding receivables.`))return;
+  queueWrite("reverseRegistrationPayment",{registrationId:id},null);
+  toast("Payment reversal queued. Google Sheets will confirm the updated totals…");
+}
+function renderRegistrationDues(calc){
+  const host=$("#registrationFinanceList");if(!host)return;
+  if(!financeLedgerVerified){
+    host.innerHTML='<div class="empty-state">Loading verified registration payments…</div>';
+    return;
+  }
+  const rows=state.registrations.filter(r=>active(r.active)&&FinanceModel.registrationRate(r.registrationType)>0);
+  rows.sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  host.innerHTML=rows.length?rows.map(r=>{
+    const amount=FinanceModel.registrationRate(r.registrationType);
+    const paid=calc.registrationPayments.get(String(r.id));
+    const pending=registrationPaymentPending(r.id)||!!r._syncState;
+    const btn=canEditFinance()&&!pending?(paid?
+      iconAction("reverse-reg-payment",r.id,"Undo received payment","rotate-ccw"):
+      `<button type="button" class="small-btn finance-receive receive-reg-payment" data-id="${esc(r.id)}" title="Mark registration received">${icon("check-circle")}<span>Received</span></button>`):"";
+    return `<article class="registration-finance-row"><div><strong>${esc(r.name)}</strong><p class="muted">${esc(r.registrationType)} · ${paid?`✓ Received ${esc(paid.date||"")} by ${esc(paid.receivedByName||"Finance")}`:(pending?"↻ Pending sync":"Awaiting payment")}</p></div><strong>${money(amount)}</strong><div>${btn}</div></article>`;
+  }).join(""):'<div class="empty-state">No paid registration categories have been registered yet.</div>';
+  host.querySelectorAll(".receive-reg-payment").forEach(b=>b.onclick=()=>receiveRegistrationClick(b.dataset.id));
+  host.querySelectorAll(".reverse-reg-payment").forEach(b=>b.onclick=()=>reverseRegistrationClick(b.dataset.id));
+}
+// Finance records combine the existing FinanceEntries ledger and confirmed registrations.
+// A Payable is an unpaid EVENT obligation. A Receivable is money owed TO the event.
+function financeRecords(calc){
+  const records=[];
+  for(const item of state.finance){
+    const received=item.type==="Receivables"?calc.collected.get(String(item.id)):null;
+    const released=item.type==="Payable"?calc.payablePayments.get(String(item.id)):null;
+    const category=item.type==="Payable"?(released?"expenses":"payables"):
+      item.type==="Expense"?"expenses":item.type==="Receivables"?(received?"received":"receivables"):"received";
+    const busy=item.type==="Payable"?financePayoutPending(item.id):financeReceiptPending(item.id);
+    records.push({key:"fin:"+item.id,category,title:item.description||"Finance record",amount:Number(item.amount)||0,
+      date:released?.date||received?.date||item.date||item.createdAt||"",source:item.type,
+      status:busy?"Syncing…":released?"Paid":received?"Received":item.type==="Payable"?"Unpaid":item.type==="Receivables"?"Awaiting":item.type==="Expense"?"Paid":["Opening Balance","Cash on Hand"].includes(item.type)?"Starting funds":"Received",
+      meta:released?`Released by ${released.releasedByName||"Finance"}`:received?`Received from ${received.source||"Other"}`:["Opening Balance","Cash on Hand"].includes(item.type)?"Not new collection":(item.recordedByName||""),
+      item,busy,released,received,kind:"finance"});
+  }
+  for(const item of state.registrations){
+    if(!active(item.active)||item._syncState)return; // never show unsynced registration as a confirmed ledger row
+    const amount=FinanceModel.registrationRate(item.registrationType);if(amount<=0)continue;
+    const received=calc.registrationPayments.get(String(item.id)),busy=registrationPaymentPending(item.id);
+    records.push({key:"reg:"+item.id,category:received?"received":"receivables",
+      title:item.name||"Registration",amount,date:received?.date||item.createdAt||"",
+      status:busy?"Syncing…":received?"Received":"Awaiting",meta:`${item.registrationType} registration`,
+      item,busy,received,kind:"registration"});
+  }
+  return records.sort((a,b)=>String(b.date).localeCompare(String(a.date))||a.title.localeCompare(b.title));
+}
 function renderFinance(){
-  const sum=type=>state.finance.filter(entry=>entry.type===type).reduce((n,entry)=>n+(Number(entry.amount)||0),0);
-  const cash=sum("Cash on Hand"),receivables=sum("Receivables"),expenses=sum("Expense");
-  $("#financeCash").textContent=money(cash);$("#financeReceivables").textContent=money(receivables);
-  $("#financeExpenses").textContent=money(expenses);$("#financeBalance").textContent=money(cash-expenses);
-  const sorted=[...state.finance].sort((a,b)=>String(b.date||b.createdAt).localeCompare(String(a.date||a.createdAt)));
-  $("#financeList").innerHTML=sorted.length?sorted.map(item=>`<article class="list-card"><div class="list-card-content"><div class="list-card-head"><strong>${esc(item.description)}</strong>${badge(item.type==="Income"?"Income (legacy)":item.type)}</div><p class="muted">${esc(item.date||"")} · ${esc(item.recordedByName||"")}</p></div><strong class="amount ${item.type==="Expense"?"amount-negative":""}">${item.type==="Expense"?"−":""}${money(item.amount)}</strong><div class="list-actions"><div class="actions-main">${canEditFinance()?iconAction("finance-edit",item.id,"Edit finance entry","pencil"):""}</div>${canDeleteFinance(item)?`<div class="actions-danger">${iconAction("finance-delete",item.id,"Delete finance entry","trash","danger-text")}</div>`:""}</div></article>`).join(""):'<div class="empty-state"><strong>No finance entries yet</strong>Finance Heads or Directors can add the first record.</div>';
-  $$(".finance-edit").forEach(b=>b.onclick=()=>financeEditor(state.finance.find(x=>x.id===b.dataset.id)));
-  $$(".finance-delete").forEach(b=>b.onclick=async()=>{
-    const entry=state.finance.find(x=>x.id===b.dataset.id);if(!entry)return;
-    if(!await confirmAction(`Delete ${money(entry.amount)} — ${entry.description}? This cannot be undone.`))return;
-    queueWrite("deleteFinance",{id:entry.id},()=>{state.finance=state.finance.filter(x=>x.id!==entry.id)});
-    toast("Finance entry deleted. Saving in background…");
+  const host=$("#financeList");if(!host)return;
+  const status=$("#financeSummaryStatus"),count=$("#financeRecordCount");
+  $$(".finance-filter").forEach(b=>{
+    const selected=b.dataset.financeFilter===financeFilter;
+    b.classList.toggle("is-selected",selected);b.setAttribute("aria-pressed",String(selected));
+  });
+  if(!financeLedgerVerified){
+    status.textContent="Waiting for a complete and verified finance snapshot. Current records stay protected until all ledgers arrive.";
+    count.textContent="Loading confirmed records…";
+    host.innerHTML='<div class="empty-state"><strong>Loading finance records…</strong>Sync to load the FinancePayouts ledger and other sheets.</div>';
+    return;
+  }
+  const calc=calculateFinance(),all=financeRecords(calc);
+  const rows=financeFilter==="all"?all:all.filter(r=>r.category===financeFilter);
+  count.textContent=`${rows.length} of ${all.length} records · ${financeFilter==="all"?"All transaction types":financeFilter.charAt(0).toUpperCase()+financeFilter.slice(1)}`;
+  status.textContent=calc.legacyIncome>0?
+    "Historical Income entries ("+money(calc.legacyIncome)+") require review and are excluded from totals.":
+    "Payables are what the event owes. Receivables are what others owe the event. Only confirmed receipts and released payments affect cash.";
+  const icons={payables:"clock",expenses:"receipt",received:"check-circle",receivables:"download"};
+  host.innerHTML=rows.length?rows.map(r=>{
+    const actionButtons=[];
+    if(canEditFinance()&&!r.busy){
+      if(r.kind==="finance"){
+        const item=r.item;
+        if(item.type==="Payable"){
+          if(r.released)actionButtons.push(iconAction("finance-undo-payout",item.id,"Undo payment release","restore"));
+          else actionButtons.push(`<button class="small-btn finance-action-primary finance-release-payable" data-id="${esc(item.id)}" title="Confirm payment released">${icon("check-circle")}<span>Release Payment</span></button>`);
+        }else if(item.type==="Receivables"){
+          if(r.received)actionButtons.push(iconAction("finance-undo-receipt",item.id,"Undo received confirmation","restore"));
+          else actionButtons.push(`<button class="small-btn finance-action-primary finance-receive" data-id="${esc(item.id)}" title="Confirm money received">${icon("check-circle")}<span>Received</span></button>`);
+        }
+        if(!r.released&&!r.received)actionButtons.push(iconAction("finance-edit",item.id,"Edit finance record","pencil"));
+        if(canDeleteFinance(item)&&!r.released&&!r.received)actionButtons.push(iconAction("finance-delete",item.id,"Delete finance record","trash","danger-text"));
+      }else{
+        if(r.received)actionButtons.push(iconAction("finance-undo-registration",r.item.id,"Undo registration receipt","restore"));
+        else actionButtons.push(`<button class="small-btn finance-action-primary finance-receive-registration" data-id="${esc(r.item.id)}" title="Confirm registration received">${icon("check-circle")}<span>Received</span></button>`);
+      }
+    }
+    const label=r.item?.type==="Opening Balance"||r.item?.type==="Cash on Hand"?"OPENING FUNDS":r.category==="payables"?"PAYABLE":r.category==="receivables"?"RECEIVABLE":r.category==="expenses"?"EXPENSE":"RECEIVED";
+    const date=String(r.date||"").slice(0,10);
+    return `<article class="finance-record-card record-${r.category}" data-record-id="${esc(r.key)}">
+      <span class="record-symbol">${icon(icons[r.category])}</span>
+      <div class="record-main"><span class="record-type">${label}</span><strong>${esc(r.title)}</strong><small>${esc([r.meta,date].filter(Boolean).join(" · "))}</small></div>
+      <div class="record-side"><strong class="record-amount">${r.category==="expenses"?"−":""}${money(r.amount)}</strong><span class="record-status">${esc(r.status)}</span></div>
+      ${actionButtons.length?`<div class="record-actions">${actionButtons.join("")}</div>`:""}
+    </article>`;
+  }).join(""):'<div class="empty-state"><strong>No matching records</strong>Try another filter or add a finance entry.</div>';
+  host.querySelectorAll(".finance-release-payable").forEach(b=>b.onclick=async()=>{
+    const item=state.finance.find(x=>x.id===b.dataset.id);
+    if(!item||item.type!=="Payable"||financePayoutPending(item.id))return;
+    if(!await confirmAction(`Confirm ${money(item.amount)} released for ${item.description}? This will count as paid Expenses and reduce Cash Available.`))return;
+    queueWrite("releasePayable",{payableId:item.id,date:TODAY()},null);
+    toast("Payment release queued. Totals update after Sheets confirms it.");
+  });
+  host.querySelectorAll(".finance-undo-payout").forEach(b=>b.onclick=async()=>{
+    const item=state.finance.find(x=>x.id===b.dataset.id);
+    if(!item||financePayoutPending(item.id))return;
+    if(!await confirmAction(`Undo release of ${money(item.amount)} for ${item.description}? This will restore the payable and Cash Available.`))return;
+    queueWrite("reversePayableRelease",{payableId:item.id},null);
+    toast("Undoing payment after Google Sheets confirmation…");
+  });
+  host.querySelectorAll(".finance-receive").forEach(b=>b.onclick=()=>{
+    const item=state.finance.find(x=>x.id===b.dataset.id);if(item)receiveFinanceEditor(item);
+  });
+  host.querySelectorAll(".finance-undo-receipt").forEach(b=>b.onclick=async()=>{
+    const item=state.finance.find(x=>x.id===b.dataset.id);if(!item||financeReceiptPending(item.id))return;
+    if(!await confirmAction(`Undo receipt for ${money(item.amount)} — ${item.description}? This will reduce collected funds.`))return;
+    queueWrite("reverseFinanceReceipt",{receivableId:item.id},null);
+  });
+  host.querySelectorAll(".finance-receive-registration").forEach(b=>b.onclick=()=>receiveRegistrationClick(b.dataset.id));
+  host.querySelectorAll(".finance-undo-registration").forEach(b=>b.onclick=()=>reverseRegistrationClick(b.dataset.id));
+  host.querySelectorAll(".finance-edit").forEach(b=>b.onclick=()=>financeEditor(state.finance.find(x=>x.id===b.dataset.id)));
+  host.querySelectorAll(".finance-delete").forEach(b=>b.onclick=async()=>{
+    const item=state.finance.find(x=>x.id===b.dataset.id);if(!item)return;
+    if(!await confirmAction(`Delete ${money(item.amount)} — ${item.description}? This cannot be undone.`))return;
+    queueWrite("deleteFinance",{id:item.id},()=>{state.finance=state.finance.filter(x=>x.id!==item.id)});
+    toast("Finance record removed locally. Syncing in background…");
   });
 }
 
 function renderFood(){
   const done=state.foodItems.filter(item=>item.status==="Done").length,total=state.foodItems.length;
-  $("#foodSummary").innerHTML=`<div class="summary-card"><span>Food list progress</span><strong>${done}/${total} completed</strong></div>`;
+  // The contextual header above already shows Food progress; avoid duplicate summary tiles.
   $("#foodList").innerHTML=["Food","Drink","Other"].map(category=>{
     const items=state.foodItems.filter(item=>item.category===category);
     return `<section class="panel food-group"><div class="food-group-heading"><h3>${esc(category)}</h3><span class="badge">${items.length} item${items.length===1?"":"s"}</span></div>${items.length?items.map(item=>`<article class="food-row"><div class="food-text"><div class="food-name">${esc(item.item)} ${badge(item.status)}</div><p class="muted">${item.quantity?`Qty: ${esc(item.quantity)} · `:""}Assigned: ${esc(item.assignedToName||"Unassigned")}</p>${item.remarks?`<div class="task-note">${esc(item.remarks)}</div>`:""}</div><div class="food-actions"><div class="actions-main">${canEditFood()?`${iconAction("food-toggle",item.id,item.status==="Done"?"Mark not done":"Mark done",item.status==="Done"?"refresh":"check-circle","primary")}${iconAction("food-edit",item.id,"Edit food item","pencil")}`:""}</div>${canEditFood()?`<div class="actions-danger">${iconAction("food-delete",item.id,"Delete food item","trash","danger-text")}</div>`:""}</div></article>`).join(""):'<p class="muted">No items in this category.</p>'}</section>`;
@@ -1206,8 +1404,10 @@ function renderRegistration(){
   const list=$("#registrationList");if(!list)return;
   const rows=state.registrations.filter(r=>active(r.active));
   const headCount=rows.reduce((n,r)=>n+(Number(r.attendeeCount)||1),0);
-  $("#registrationTotal").textContent=String(rows.length);
-  $("#registrationPeople").textContent=String(headCount);
+  const calc=financeLedgerVerified?calculateFinance():null;
+  const due=$("#registrationDueSummary");if(due)due.textContent=calc?money(calc.registrationOutstanding):"—";
+  const paidSum=$("#registrationCollectedSummary");if(paidSum)paidSum.textContent=calc?money(calc.registrationCollected):"—";
+  // Registration totals live in the contextual header; the category cards remain below.
   $("#registrationBreakdown").innerHTML=REGISTRATION_TYPES.map(type=>{
     const relevant=rows.filter(r=>r.registrationType===type);
     const participants=relevant.reduce((n,r)=>n+(Number(r.attendeeCount)||1),0);
@@ -1217,14 +1417,23 @@ function renderRegistration(){
   const type=$("#registrationTypeFilter").value;
   const visible=rows.filter(r=>(!type||r.registrationType===type)&&(!query||[r.name,r.registrationType,r.notes].some(x=>String(x||"").toLocaleLowerCase().includes(query))));
   list.innerHTML=visible.length?visible.sort((a,b)=>String(a.name).localeCompare(String(b.name),"en-PH")).map(r=>{
-    const controls=canEditRegistration(r)?`<div class="registration-row-actions">${iconAction("edit-registration",r.id,"Edit registration","pencil")}${iconAction("archive-registration",r.id,"Remove registration","trash")}</div>`:"";
+    const price=FinanceModel.registrationRate(r.registrationType);
+    const payment=calc?.registrationPayments.get(String(r.id));
+    const waiting=registrationPaymentPending(r.id)||!!r._syncState;
+    const payAction=canEditFinance()&&calc&&!waiting&&price>0?(payment?
+      iconAction("reverse-registration",r.id,"Undo received registration payment","rotate-ccw"):
+      `<button type="button" class="small-btn finance-receive receive-registration" data-id="${esc(r.id)}" title="Confirm registration payment">${icon("check-circle")}<span>Received</span></button>`):"";
+    const controls=`<div class="registration-row-actions">${payAction}${canEditRegistration(r)?iconAction("edit-registration",r.id,"Edit registration","pencil")+iconAction("archive-registration",r.id,"Remove registration","trash"):""}</div>`;
     const status=r._syncState?`<span class="registration-sync-label ${r._syncState}" role="status">${r._syncState==="failed"?"⚠ Needs sync":r._syncState==="saving"?"↻ Syncing…":"◷ Queued"}</span>`:"";
-    return `<article class="registration-card"><div><strong>${esc(r.name)}</strong> ${status}<p class="muted">${esc(r.registrationType)}${Number(r.attendeeCount)>1?` · ${Number(r.attendeeCount)} attendees`:""}</p>${r.notes?`<p class="registration-notes">${esc(r.notes)}</p>`:""}<small class="muted">Registered by ${esc(r.registeredByName||"Unknown")} · ${esc(r.createdAt||"")}</small></div>${controls}</article>`;
+    return `<article class="registration-card"><div><strong>${esc(r.name)}</strong> ${status}<p class="muted">${esc(r.registrationType)}${Number(r.attendeeCount)>1?` · ${Number(r.attendeeCount)} attendees`:""} · ${price?money(price):"Free"} · ${price?(payment?`✓ Received ${esc(payment.date||"")}`:(waiting?"Syncing…":"Awaiting payment")):"No payment needed"}</p>${r.notes?`<p class="registration-notes">${esc(r.notes)}</p>`:""}<small class="muted">Registered by ${esc(r.registeredByName||"Unknown")} · ${esc(r.createdAt||"")}</small></div>${controls}</article>`;
   }).join(""):'<div class="empty-state">No matching registrations yet.</div>';
+  list.querySelectorAll(".receive-registration").forEach(b=>b.onclick=()=>receiveRegistrationClick(b.dataset.id));
+  list.querySelectorAll(".reverse-registration").forEach(b=>b.onclick=()=>reverseRegistrationClick(b.dataset.id));
   list.querySelectorAll(".edit-registration").forEach(b=>b.onclick=()=>openRegistrationEditor(rows.find(r=>r.id===b.dataset.id)));
   list.querySelectorAll(".archive-registration").forEach(b=>b.onclick=async()=>{
     const row=rows.find(r=>r.id===b.dataset.id);
-    if(!row||!await confirmAction(`Remove ${row.name} from the active registration list? The record stays in Sheets.`))return;
+    if(!row||registrationPaymentPending(row.id))return toast("Payment sync is in progress. Sync before removing this registration.");
+    if(!await confirmAction(`Remove ${row.name} from attendance and finance totals? Any received payment will be reversed in the ledger. The audit record remains in Sheets.`))return;
     // A queued unsent registration can be cancelled locally without creating
     // an unnecessary add-then-delete race in Google Sheets.
     if(failedJobs.some(j=>registrationRecords(j).some(r=>r.id===row.id))){
@@ -1249,6 +1458,7 @@ function openRegistrationEditor(item=null){
   if(!state.user)return openLogin();
   if(item&&!canEditRegistration(item))return toast("Only the registrar or Directors can edit this entry.");
   if(item?._syncState==="failed")return toast("Retry Sync before editing this unconfirmed registration.");
+  if(item&&registrationPaymentPending(item.id))return toast("Payment update is still syncing. Try again shortly.");
   const form=$("#registrationForm");
   form.dataset.recordId=item?.id||"";
   form.dataset.needsSync="false";
@@ -1278,6 +1488,9 @@ function saveRegistrationForm(event){
   if(record.registrationType!=="Family")record.attendeeCount=1;
   if(!Number.isInteger(record.attendeeCount)||record.attendeeCount<1||record.attendeeCount>100){error.textContent="Family attendees must be 1–100.";return;}
   if(record.notes.length>350){error.textContent="Notes must be 350 characters or less.";return;}
+  if(old&&financeLedgerVerified&&calculateFinance().registrationPayments.has(String(old.id))&&old.registrationType!==record.registrationType){
+    error.textContent="Payment already received. Undo it before changing the registration type.";return;
+  }
   if(!queueRegistrationWrite(record))return;
   const close=old||event.submitter?.id==="registrationSaveCloseBtn";
   if(close){$("#registrationDialog").close();}
@@ -1409,12 +1622,42 @@ function taskEditor(t=null){
 }
 function financeEditor(entry=null){
   if(!canEditFinance())return toast("Only the Finance Heads or Directors may edit finance records.");
+  if(entry?.type==="Receivables"&&calculateFinance().collected.has(String(entry.id)))
+    return toast("Received funds are locked. Undo the receipt first to edit this receivable.");
+  if(entry?.type==="Payable"&&calculateFinance().payablePayments.has(String(entry.id)))
+    return toast("The payable has already been paid. Undo the release before editing.");
+  const choices=[
+    ["Receivables","Receivable — money owed TO the event"],
+    ["Payable","Payable — reimbursement or credit, not yet paid"],
+    ["Registration Collected","Registration — received"],
+    ["Solicitation Collected","Solicitation — received"],
+    ["Donation","Donation — received"],
+    ["Other Received","Other money received"],
+    ["Opening Balance","Opening balance"],
+    ["Expense","Expense"],
+    ...(entry?.type==="Cash on Hand"?[["Cash on Hand","Cash received (legacy)"]]:[]),
+    ...(entry?.type==="Income"?[["Income","Income (legacy; excluded until reviewed)"]]:[])
+  ];
   openEditor(entry?"Edit finance entry":"Add finance entry",[
-    {name:"type",label:"Entry type",type:"select",options:["Cash on Hand","Receivables","Expense",...(entry?.type==="Income"?["Income"]:[])].map(x=>({value:x,label:x==="Income"?"Income (legacy; edit existing only)":x}))},
+    {name:"type",label:"Money type",type:"select",options:choices.map(([value,label])=>({value,label}))},
     {name:"amount",label:"Amount (PHP)",type:"number",min:0.01,step:0.01,required:true},
-    {name:"description",label:"Description",required:true},
-    {name:"date",label:"Date",type:"date",required:true}
+    {name:"description",label:"Details (include who is owed for payables)",required:true},
+    {name:"date",label:"Date recorded",type:"date",required:true}
   ],"saveFinance",entry||{type:"Receivables",date:TODAY()});
+}
+function receiveFinanceEditor(entry){
+  if(!canEditFinance()||!financeLedgerVerified)return toast("Finance data is still loading. Sync first.");
+  const calc=calculateFinance();
+  if(calc.collected.has(String(entry.id))||financeReceiptPending(entry.id))return;
+  openEditor("Confirm received · "+money(entry.amount)+" · "+entry.description,[
+    {name:"source",label:"Received from",type:"select",required:true,options:[
+      {value:"",label:"Choose a source…",disabled:true},
+      {value:"Registration",label:"Registration collected"},
+      {value:"Solicitation",label:"Solicitation collected"},
+      {value:"Donation",label:"Donation"},
+      {value:"Other",label:"Other money received"}]},
+    {name:"date",label:"Date received",type:"date",required:true}
+  ],"receiveFinance",{id:entry.id,source:"",date:TODAY()});
 }
 function foodEditor(item=null){
   if(!canEditFood())return toast("Only the Food Heads or Directors may edit this list.");
@@ -1475,6 +1718,12 @@ function saveEditor(ev){
       payload={task};
       optimistic=()=>{if(old)Object.assign(old,task);else state.tasks.push(task)};break;
     }
+    case "receiveFinance":{
+      const entry=state.finance.find(e=>e.id===recordId&&e.type==="Receivables");
+      if(!entry||financeReceiptPending(recordId))return;
+      if(!data.source){$("#editError").textContent="Choose where the received money came from.";return;}
+      payload={receivableId:recordId,source:data.source,date:data.date};optimistic=null;break;
+    }
     case "saveFinance":{
       const old=state.finance.find(f=>f.id===recordId),id=recordId||localId();
       payload={entry:{...data,id}};
@@ -1491,7 +1740,7 @@ function saveEditor(ev){
   queueWrite(action,payload,optimistic);
   $("#editDialog").close();
   if(action==="saveMember"&&state.managingCommitteeId&&canManageMembers(state.managingCommitteeId))openMembers(state.managingCommitteeId);
-  toast("Updated instantly. Saving to Google Sheets in background…");
+  toast(action==="receiveFinance"?"Recording receipt in Google Sheets. It counts as collected only after confirmation…":"Updated instantly. Saving to Google Sheets in background…");
 }
 
 function confirmAction(message){

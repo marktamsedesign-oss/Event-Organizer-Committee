@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="assets/icons/favicon.svg?v=2.9">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/icons/apple-touch-icon.png?v=2.9">
   <title>Pasko ng Angkan 2026</title>
-  <link rel="stylesheet" href="assets/css/style.css?v=2.9.3">
+  <link rel="stylesheet" href="assets/css/style.css?v=2.9.6">
   <link rel="stylesheet" href="assets/css/hero-animation.css?v=2.8">
 </head>
 <body>
@@ -131,12 +131,7 @@
         <div class="hero-snow" id="heroSnow" aria-hidden="true"></div>
       </section>
 
-      <section id="summaryStrip" class="summary-grid" aria-label="Event summary">
-        <article class="summary-card"><span>Committees</span><strong id="sumCommittees">—</strong></article>
-        <article class="summary-card"><span>Total tasks</span><strong id="sumTasks">—</strong></article>
-        <article class="summary-card"><span>Completed</span><strong id="sumCompleted">—</strong></article>
-        <article class="summary-card"><span>Needs attention</span><strong id="sumPending">—</strong></article>
-      </section>
+      <section id="summaryStrip" class="summary-grid contextual-summary" aria-label="Current tab overview" aria-live="polite"></section>
 
       <nav class="tabs" aria-label="Main navigation">
         <button class="tab active" data-tab="committees"><span>♧</span> Committees</button>
@@ -169,18 +164,23 @@
       </section>
 
       <section id="tab-finance" class="tab-panel">
-        <div class="section-heading">
-          <div><p class="eyebrow">FINANCE & PROCUREMENT</p><h2>Finance tracker</h2><p class="muted">Opening cash, outstanding receivables, expenses and available cash.</p></div>
-          <button id="addFinanceBtn" type="button" class="primary-btn hidden" data-icon="plus" title="Add finance entry" aria-label="Add finance entry"></button>
+        <div class="finance-records-heading section-heading">
+          <div><p class="eyebrow">FINANCE &amp; PROCUREMENT</p><h2>Records</h2><p class="muted">Track what we owe, what we've paid, and what we've received.</p></div>
+          <div class="finance-heading-actions">
+            <button id="financeFilterToggle" type="button" class="icon-btn finance-filter-toggle" aria-expanded="true" title="Show or hide transaction filters" aria-label="Show or hide transaction filters" data-icon="filter"></button>
+            <button id="addFinanceBtn" type="button" class="primary-btn hidden" data-icon="plus" title="Add finance record" aria-label="Add finance record"></button>
+          </div>
         </div>
-        <div class="summary-grid finance-grid">
-          <article class="summary-card"><span>Cash on hand</span><strong id="financeCash">₱0.00</strong></article>
-          <article class="summary-card"><span>Receivables</span><strong id="financeReceivables">₱0.00</strong></article>
-          <article class="summary-card"><span>Expenses</span><strong id="financeExpenses">₱0.00</strong></article>
-          <article class="summary-card accent-card"><span>Available cash</span><strong id="financeBalance">₱0.00</strong></article>
+        <div id="financeFilters" class="finance-filter-list" role="group" aria-label="Filter transactions">
+          <button class="finance-filter is-selected" data-finance-filter="all" data-icon="list-todo" aria-pressed="true">All</button>
+          <button class="finance-filter" data-finance-filter="payables" data-icon="clock" aria-pressed="false">Payables</button>
+          <button class="finance-filter" data-finance-filter="expenses" data-icon="receipt" aria-pressed="false">Expenses</button>
+          <button class="finance-filter" data-finance-filter="received" data-icon="check-circle" aria-pressed="false">Received</button>
+          <button class="finance-filter" data-finance-filter="receivables" data-icon="download" aria-pressed="false">Receivables</button>
         </div>
-        <p class="section-note">Receivables are money expected but not yet collected, so they are not included in available cash. When collected, adjust the receivable and record the received cash as Cash on Hand. Older Income entries remain visible as historical records.</p>
-        <div id="financeList" class="stack-list"></div>
+        <p class="finance-record-count" id="financeRecordCount" role="status" aria-live="polite">Loading records…</p>
+        <div id="financeList" class="finance-record-list"></div>
+        <p class="section-note" id="financeSummaryStatus" role="status" aria-live="polite">Loading verified finance records…</p>
       </section>
 
       <section id="tab-food" class="tab-panel">
@@ -188,7 +188,6 @@
           <div><p class="eyebrow">FOOD & FELLOWSHIP</p><h2>Food and supplies</h2><p class="muted">Keep track of what's needed, who's assigned and what is ready.</p></div>
           <button id="addFoodBtn" type="button" class="primary-btn hidden" data-icon="plus" title="Add food item" aria-label="Add food item"></button>
         </div>
-        <div id="foodSummary" class="food-summary"></div>
         <div id="foodList" class="food-groups"></div>
       </section>
 
@@ -196,10 +195,6 @@
         <div class="section-heading">
           <div><p class="eyebrow">ATTENDANCE & VISITORS</p><h2>Event registration</h2><p class="muted">Add participants quickly. Entries appear immediately, then sync to Google Sheets in batches in the background.</p></div>
           <button id="registerBtn" type="button" class="primary-btn" data-icon="user-plus" title="Register a participant" aria-label="Register a participant"></button>
-        </div>
-        <div class="summary-grid registration-totals">
-          <article class="summary-card"><span>Registrations</span><strong id="registrationTotal">0</strong></article>
-          <article class="summary-card"><span>Total attendees</span><strong id="registrationPeople">0</strong></article>
         </div>
         <div class="registration-breakdown" id="registrationBreakdown" aria-label="Registration category totals"></div>
         <div class="filters registration-filters">
@@ -349,7 +344,8 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="assets/js/api.js?v=2.9.2"></script>
-  <script src="assets/js/app.js?v=2.9.4"></script>
+  <script src="assets/js/finance-model.js?v=2.9.6"></script>
+  <script src="assets/js/app.js?v=2.9.6-registrations"></script>
   <script src="assets/js/hero-animation.js?v=2.8" defer></script>
 </body>
 </html>
