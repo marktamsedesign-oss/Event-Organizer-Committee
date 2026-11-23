@@ -1,10 +1,10 @@
 /* Pasko ng Angkan v2.9.9: cache ONLY public app files, never Sheets data or passwords. */
-const CACHE_NAME='pna-app-shell-v2.10';
+const CACHE_NAME='pna-app-shell-v2.11';
 const SHELL=[
   './','./index.html','./manifest.webmanifest',
-  './assets/css/style.css?v=2.10','./assets/css/hero-animation.css?v=2.8',
+  './assets/css/style.css?v=2.11','./assets/css/hero-animation.css?v=2.8',
   './assets/js/api.js?v=2.9.2','./assets/js/finance-model.js?v=2.9.6',
-  './assets/js/member-autocomplete.js?v=2.10','./assets/js/app.js?v=2.10-members','./assets/js/hero-animation.js?v=2.8',
+  './assets/js/member-autocomplete.js?v=2.10','./assets/js/registration-duplicates.js?v=2.11','./assets/js/app.js?v=2.11-registration','./assets/js/hero-animation.js?v=2.8',
   './assets/icons/favicon.svg?v=2.9','./assets/icons/apple-touch-icon.png?v=2.9'
 ];
 self.addEventListener('install',event=>{

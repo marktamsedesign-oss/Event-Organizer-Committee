@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="assets/icons/apple-touch-icon.png?v=2.9">
   <link rel="manifest" href="manifest.webmanifest">
   <title>Pasko ng Angkan 2026</title>
-  <link rel="stylesheet" href="assets/css/style.css?v=2.10">
+  <link rel="stylesheet" href="assets/css/style.css?v=2.11">
   <link rel="stylesheet" href="assets/css/hero-animation.css?v=2.8">
 </head>
 <body>
@@ -279,9 +279,10 @@
       <div class="modal-title"><div><p class="eyebrow">ATTENDANCE</p><h2 id="registrationDialogTitle">Register participant</h2></div><button type="button" class="close-btn" data-close="registrationDialog" aria-label="Cancel registration">×</button></div>
       <label class="field"><span>Participant / family name</span><span class="registration-name-wrap"><input id="registrationName" name="name" maxlength="120" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="registrationNameSuggestions" required placeholder="Full name or family name"><span id="registrationNameSuggestions" class="registration-name-suggestions" role="listbox" aria-label="Member name suggestions" hidden></span></span></label>
       <label class="field"><span>Registration type</span><select id="registrationType" required><option value="" disabled>Choose adult type</option><option>Family</option><option>Working Adult</option><option>Non-Working Adult</option><option>Youth</option><option>Kids</option><option>Visitors</option></select><small id="registrationAgeHint" class="registration-age-hint" aria-live="polite"></small></label>
-      <label class="field"><span>Number of attendees (Family only)</span><input id="registrationAttendees" type="number" inputmode="numeric" min="1" max="100" value="1" disabled required></label>
+      <label class="field"><span>Number of attendees</span><input id="registrationAttendees" type="number" inputmode="numeric" min="1" max="100" value="1" disabled required><small class="registration-age-hint">Family: enter the number attending. All other types: fixed at 1.</small></label>
       <label class="field"><span>Notes (optional)</span><textarea id="registrationNotes" maxlength="350" rows="3" placeholder="Additional details (avoid phone numbers or sensitive information)"></textarea></label>
       <p class="muted">Tap <b>Add & Next</b> to register another person instantly, or <b>Save & Close</b> when finished. A pending badge shows entries not yet confirmed by Google Sheets.</p>
+      <p id="registrationDuplicateNotice" class="registration-duplicate-notice" role="status" aria-live="polite"></p>
       <p id="registrationError" class="form-error" role="alert"></p>
       <div class="modal-actions registration-actions"><button type="button" class="secondary-btn" data-close="registrationDialog" title="Close registration form">Cancel</button><button id="registrationSaveCloseBtn" type="submit" class="secondary-btn" title="Queue and close">Save & Close</button><button id="registrationNextBtn" type="submit" class="primary-btn" data-icon="user-plus" title="Queue and add another">Add & Next</button></div>
     </form>
@@ -350,7 +351,8 @@
   <script src="assets/js/api.js?v=2.9.2"></script>
   <script src="assets/js/finance-model.js?v=2.9.6"></script>
   <script src="assets/js/member-autocomplete.js?v=2.10"></script>
-  <script src="assets/js/app.js?v=2.10-members"></script>
+  <script src="assets/js/registration-duplicates.js?v=2.11"></script>
+  <script src="assets/js/app.js?v=2.11-registration"></script>
   <script src="assets/js/hero-animation.js?v=2.8" defer></script>
 </body>
 </html>

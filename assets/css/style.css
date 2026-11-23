@@ -349,3 +349,9 @@ form.modal-card{isolation:isolate}
 .registration-name-option:hover,.registration-name-option:focus-visible,.registration-name-option.is-highlighted{background:#eaf1ff;color:#173f86}
 .registration-age-hint{display:block;font-size:11px;color:#64748b;line-height:1.4}
 .registration-age-hint:empty{display:none}
+
+/* v2.11: exact-match protection and non-blocking near-name warning. */
+.registration-duplicate-notice{display:none;border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.45;font-weight:600;margin:7px 0}
+.registration-duplicate-notice.is-blocked{display:block;border:1px solid #f3bcbf;background:#fff1f2;color:#952d36}
+.registration-duplicate-notice.is-warning{display:block;border:1px solid #f0d295;background:#fff9e8;color:#7b5617}
+.registration-actions button:disabled{opacity:.45;cursor:not-allowed}

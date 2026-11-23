@@ -101,6 +101,30 @@ function chooseRegistrationMember(person){
     hint.textContent="Birthday unavailable — choose the registration type.";
   }
   type.dispatchEvent(new Event("change"));
+  checkRegistrationDuplicates();
+}
+// Check active, offline-queued, and unconfirmed records already visible in state.
+// Exact duplicate => block. Near match => warn only. Apps Script enforces exact
+// names under a script lock to protect cross-device submissions.
+function checkRegistrationDuplicates(){
+  const field=$("#registrationName"),kind=$("#registrationType"),alert=$("#registrationDuplicateNotice");
+  if(!field||!kind||!alert)return {kind:"none"};
+  const recordId=$("#registrationForm")?.dataset.recordId||"";
+  const result=window.RegistrationDuplicates?.find(field.value,kind.value,state.registrations,recordId)||{kind:"none"};
+  if(result.kind==="duplicate"){
+    alert.className="registration-duplicate-notice is-blocked";
+    alert.textContent=`Already registered: ${result.record.name}. Choose a different participant.`;
+  }else if(result.kind==="similar"){
+    alert.className="registration-duplicate-notice is-warning";
+    alert.textContent=`Possible duplicate: ${result.record.name}. Check the name before continuing.`;
+  }else{
+    alert.className="registration-duplicate-notice";alert.textContent="";
+  }
+  const editing=Boolean(recordId);
+  for(const selector of ["#registrationNextBtn","#registrationSaveCloseBtn"]){
+    const button=$(selector);if(button&&!(editing&&selector==="#registrationNextBtn"))button.disabled=result.kind==="duplicate";
+  }
+  return result;
 }
 function resetRegistrationMatch(){
   selectedRegistrationMember=null;
@@ -622,7 +646,7 @@ function updateSaveState(){
   el.classList.toggle("save-error",failedJobs.length>0);
   el.classList.toggle("offline",offline);
   updateOfflineBanner();
-  el.title=failedJobs.length?"Some edits are not confirmed by Sheets. Press Sync & Refresh to retry safely.":pendingWrites?"Saving changes to Google Sheets in the background.":refreshing?"Latest data is loading; the existing view stays visible.":"Latest write confirmations received";
+  el.title=failedJobs.some(j=>j.permanentError)?"A rejected edit needs correction. Remove the duplicate registration from Registration before resyncing.":failedJobs.length?"Some edits are not confirmed by Sheets. Press Sync & Refresh to retry safely.":pendingWrites?"Saving changes to Google Sheets in the background.":refreshing?"Latest data is loading; the existing view stays visible.":"Latest write confirmations received";
   badge.textContent=total>99?"99+":String(total);
   badge.classList.toggle("hidden",!total);
   btn.classList.toggle("has-unsynced",total>0);
@@ -708,7 +732,7 @@ async function drainWrites(){
         }
         if(job.resolve)job.resolve(result);
       }catch(error){
-        const permanentError=/Registration details|Enter participant|Choose a registration type|Attendee count|Only Family registrations|Notes must be|Only the original registrar|Registration not found|SESSION_INVALID/.test(error.message);
+        const permanentError=/Registration details|Enter participant|Choose a registration type|Attendee count|Only Family registrations|Notes must be|Only the original registrar|Registration not found|Already registered:|SESSION_INVALID/.test(error.message);
         failedJobs.push({...job,error:error.message,permanentError,resolve:undefined,reject:undefined});
         if(isRegistrationJob(job)){
           for(const rec of registrationRecords(job)){
@@ -718,7 +742,7 @@ async function drainWrites(){
           renderRegistration();
         }
         if(job.reject)job.reject(error);
-        toast("Not synced: "+error.message+". Press Sync to retry safely.");
+        toast(permanentError&&/Already registered:/.test(error.message)?"Not synced: "+error.message+" Remove the rejected entry from Registration to sync the rest.":"Not synced: "+error.message+". Press Sync to retry safely.");
       }finally{
         pendingWrites-=jobWeight(job);inflightJob=null;persistOutbox();updateSaveState();
       }
@@ -1055,6 +1079,7 @@ function bindEvents(){
       $("#registrationType").value=""; // a different name must not inherit the last person's age category
     }
     renderRegistrationSuggestions();
+    checkRegistrationDuplicates();
   });
   $("#registrationName").addEventListener("focus",renderRegistrationSuggestions);
   $("#registrationName").addEventListener("blur",()=>setTimeout(hideRegistrationSuggestions,120));
@@ -1075,6 +1100,7 @@ function bindEvents(){
     if(!isFamily)$("#registrationAttendees").value="1";
     if(isFamily){resetRegistrationMatch();}
     else hideRegistrationSuggestions();
+    checkRegistrationDuplicates();
   };
   $("#addMemberBtn").onclick=()=>{const committee=state.committees.find(c=>c.id===state.managingCommitteeId);if(committee)memberEditor(committee)};
   $("#taskCommitteeFilter").onchange=renderTasks;
@@ -1716,8 +1742,28 @@ function renderRegistration(){
     if(!await confirmAction(`Remove ${row.name} from attendance and finance totals? Any received payment will be reversed in the ledger. The audit record remains in Sheets.`))return;
     // A queued unsent registration can be cancelled locally without creating
     // an unnecessary add-then-delete race in Google Sheets.
-    if(failedJobs.some(j=>registrationRecords(j).some(r=>r.id===row.id))){
-      toast("Sync this unconfirmed registration before removing it.");return;
+    const failed=failedJobs.find(j=>isRegistrationJob(j)&&registrationRecords(j).some(r=>r.id===row.id));
+    if(failed){
+      if(!failed.permanentError){toast("This save may already have reached Google Sheets. Retry Sync before removing it.");return;}
+      // A server-rejected batch made no changes. Remove the rejected item and
+      // requeue its companions with a fresh ID (the original payload changed).
+      const others=registrationRecords(failed).filter(r=>r.id!==row.id);
+      const updated=others.length?{...failed,action:"saveRegistrationsBatch",payload:{registrations:others},
+        count:others.length,requestId:"req_"+Date.now()+"_"+Math.random().toString(36).slice(2,11),
+        permanentError:false,error:"Corrected rejected batch"}:null;
+      const previousJobs=failedJobs,previousRows=state.registrations;
+      failedJobs=failedJobs.filter(j=>j!==failed);
+      if(updated)failedJobs.push(updated);
+      state.registrations=state.registrations.filter(r=>r.id!==row.id||r._everConfirmed);
+      if(!persistOutbox()){
+        failedJobs=previousJobs;state.registrations=previousRows;
+        toast("Could not safely update the offline queue. No changes were discarded.");return;
+      }
+      changeVersion++;updateSaveState();renderRegistration();
+      if(updated)retryFailedRegistrationWrites({showToast:true});
+      else if(navigator.onLine!==false&&unsyncedCount()===0)refreshLatest({silent:true}).catch(()=>{});
+      toast(`Removed the rejected registration for ${row.name}.`);
+      return;
     }
     const buffered=registrationBuffer.find(j=>j.payload?.registration?.id===row.id);
     if(buffered){
@@ -1752,6 +1798,7 @@ function openRegistrationEditor(item=null){
   $("#registrationNotes").value=item?.notes||"";
   $("#registrationError").textContent="";
   resetRegistrationMatch();
+  checkRegistrationDuplicates();
   if(!memberCatalogFetched)restoreMemberCatalog();
   // The form is usable immediately: this read never blocks registration.
   if(navigator.onLine!==false)loadMemberCatalog({force:true}).catch(err=>{
@@ -1770,6 +1817,8 @@ function saveRegistrationForm(event){
     notes:$("#registrationNotes").value.trim()};
   const error=$("#registrationError");error.textContent="";
   if(!record.name||record.name.length>120){error.textContent="Enter a name (up to 120 characters).";return;}
+  const conflict=checkRegistrationDuplicates();
+  if(conflict.kind==="duplicate"){error.textContent=`${conflict.record.name} is already registered. This entry was not saved.`;return;}
   if(!REGISTRATION_TYPES.includes(record.registrationType)){error.textContent="Choose a registration type.";return;}
   if(record.registrationType!=="Family")record.attendeeCount=1;
   if(!Number.isInteger(record.attendeeCount)||record.attendeeCount<1||record.attendeeCount>100){error.textContent="Family attendees must be 1–100.";return;}
@@ -1787,6 +1836,7 @@ function saveRegistrationForm(event){
     resetRegistrationMatch();
     $("#registrationNotes").value="";
     $("#registrationAttendees").value="1";
+    checkRegistrationDuplicates();
     $("#registrationName").focus();
   }
   toast(`Queued: ${record.name}. ${unsyncedCount()} change(s) pending background sync.`);
