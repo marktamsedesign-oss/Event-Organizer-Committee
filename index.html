@@ -7,8 +7,9 @@
   <meta name="description" content="Pasko ng Angkan 2026 event management">
   <link rel="icon" type="image/svg+xml" href="assets/icons/favicon.svg?v=2.9">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/icons/apple-touch-icon.png?v=2.9">
+  <link rel="manifest" href="manifest.webmanifest">
   <title>Pasko ng Angkan 2026</title>
-  <link rel="stylesheet" href="assets/css/style.css?v=2.9.6">
+  <link rel="stylesheet" href="assets/css/style.css?v=2.10">
   <link rel="stylesheet" href="assets/css/hero-animation.css?v=2.8">
 </head>
 <body>
@@ -46,6 +47,9 @@
         </button>
       </div>
     </header>
+    <div id="offlineBanner" class="offline-banner hidden" role="status" aria-live="polite">
+      <strong>Offline mode</strong><span id="offlineQueueCount">Last confirmed records shown</span>
+    </div>
 
     <main>
       <section class="hero hero-animated" aria-label="Pasko ng Angkan Christmas celebration">
@@ -271,10 +275,10 @@
 
   <!-- Quick registration: instant entry; server writes run in the background. -->
   <dialog id="registrationDialog" class="modal" aria-labelledby="registrationDialogTitle">
-    <form id="registrationForm" class="modal-card">
+    <form id="registrationForm" class="modal-card" novalidate>
       <div class="modal-title"><div><p class="eyebrow">ATTENDANCE</p><h2 id="registrationDialogTitle">Register participant</h2></div><button type="button" class="close-btn" data-close="registrationDialog" aria-label="Cancel registration">×</button></div>
-      <label class="field"><span>Participant / family name</span><input id="registrationName" name="name" maxlength="120" autocomplete="off" required placeholder="Full name or family name"></label>
-      <label class="field"><span>Registration type</span><select id="registrationType" required><option>Family</option><option>Working Adult</option><option>Non-Working Adult</option><option>Youth</option><option>Kids</option><option>Visitors</option></select></label>
+      <label class="field"><span>Participant / family name</span><span class="registration-name-wrap"><input id="registrationName" name="name" maxlength="120" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="registrationNameSuggestions" required placeholder="Full name or family name"><span id="registrationNameSuggestions" class="registration-name-suggestions" role="listbox" aria-label="Member name suggestions" hidden></span></span></label>
+      <label class="field"><span>Registration type</span><select id="registrationType" required><option value="" disabled>Choose adult type</option><option>Family</option><option>Working Adult</option><option>Non-Working Adult</option><option>Youth</option><option>Kids</option><option>Visitors</option></select><small id="registrationAgeHint" class="registration-age-hint" aria-live="polite"></small></label>
       <label class="field"><span>Number of attendees (Family only)</span><input id="registrationAttendees" type="number" inputmode="numeric" min="1" max="100" value="1" disabled required></label>
       <label class="field"><span>Notes (optional)</span><textarea id="registrationNotes" maxlength="350" rows="3" placeholder="Additional details (avoid phone numbers or sensitive information)"></textarea></label>
       <p class="muted">Tap <b>Add & Next</b> to register another person instantly, or <b>Save & Close</b> when finished. A pending badge shows entries not yet confirmed by Google Sheets.</p>
@@ -345,7 +349,8 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="assets/js/api.js?v=2.9.2"></script>
   <script src="assets/js/finance-model.js?v=2.9.6"></script>
-  <script src="assets/js/app.js?v=2.9.8-sync"></script>
+  <script src="assets/js/member-autocomplete.js?v=2.10"></script>
+  <script src="assets/js/app.js?v=2.10-members"></script>
   <script src="assets/js/hero-animation.js?v=2.8" defer></script>
 </body>
 </html>

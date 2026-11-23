@@ -332,3 +332,20 @@ form.modal-card{isolation:isolate}
   .contextual-summary.is-finance>.summary-card strong{font-size:clamp(12px,3.6vw,23px);letter-spacing:-.45px;overflow-wrap:anywhere}
   .contextual-summary.is-finance>.summary-card span{font-size:clamp(10px,2.8vw,12px)}
 }
+
+/* v2.9.9 — offline queue and clearly signaled connectivity */
+.offline-banner{margin:8px 0 14px;padding:11px 14px;border:1px solid #efd6a0;border-radius:12px;
+ background:#fff7e6;color:#76501b;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px}
+.offline-banner strong{font-size:12px}.offline-banner span{color:#76501b}
+.offline-banner.hidden{display:none}
+.save-state.offline{background:#fff7e6;border-color:#e9c56a;color:#76501b}
+
+/* v2.10: inline Members autocomplete; names only, no extra descriptions. */
+.registration-name-wrap{display:block;position:relative;min-width:0}
+.registration-name-wrap input{width:100%}
+.registration-name-suggestions[hidden]{display:none!important}
+.registration-name-suggestions{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:100;background:var(--card,#fff);border:1px solid #ccdcf7;border-radius:12px;padding:4px;box-shadow:0 14px 35px rgba(24,48,83,.18);max-height:228px;overflow:auto}
+.registration-name-option{display:block;width:100%;padding:12px 11px;text-align:left;border:0;background:transparent;border-radius:8px;color:inherit;font-size:14px;font-weight:600;line-height:1.35}
+.registration-name-option:hover,.registration-name-option:focus-visible,.registration-name-option.is-highlighted{background:#eaf1ff;color:#173f86}
+.registration-age-hint{display:block;font-size:11px;color:#64748b;line-height:1.4}
+.registration-age-hint:empty{display:none}

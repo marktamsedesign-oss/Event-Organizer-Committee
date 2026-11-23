@@ -1,4 +1,4 @@
-/* Pasko ng Angkan 2026 — v2.9.8 background sync + 30-minute refresh + receivables. */
+/* Pasko ng Angkan 2026 — v2.10 member suggestions + DOB registration types; retains v2.9.9 offline features. */
 "use strict";
 const state = {
   bootstrap:null,user:null,token:null,committees:[],members:[],tasks:[],updates:[],
@@ -22,10 +22,96 @@ const V295_SNAPSHOT_KEY="pna_confirmed_snapshot_v295_registration";
 const PREVIOUS_SNAPSHOT_KEY="pna_confirmed_snapshot_v295";
 const OLDER_SNAPSHOT_KEY="pna_confirmed_snapshot_v293";
 let financeLedgerVerified=false;
+// Optional, read-only Members lookup. The server sends only names, member IDs
+// and DOB-derived age groups; full birthdays never enter this client cache.
+const MEMBER_CATALOG_KEY="pna_members_autocomplete_v210";
+const MEMBER_CATALOG_MAX_AGE=90*86400000;
+let memberCatalog=[], memberCatalogFetched=false, memberCatalogPromise=null;
+let selectedRegistrationMember=null, registrationSuggestionIndex=-1;
+function restoreMemberCatalog(){
+  if(!state.user)return false;
+  try{
+    const item=JSON.parse(localStorage.getItem(MEMBER_CATALOG_KEY)||"null");
+    if(item?.userId!==state.user.id||!Array.isArray(item.members)||
+       !Number.isFinite(item.savedAt)||Date.now()-item.savedAt<0||
+       Date.now()-item.savedAt>MEMBER_CATALOG_MAX_AGE)return false;
+    memberCatalog=item.members.filter(m=>m&&m.id&&m.name);
+    memberCatalogFetched=true;
+    return true;
+  }catch{return false}
+}
+function saveMemberCatalog(){
+  if(!state.user)return;
+  try{localStorage.setItem(MEMBER_CATALOG_KEY,JSON.stringify({userId:state.user.id,savedAt:Date.now(),members:memberCatalog}))}catch{}
+}
+async function loadMemberCatalog({force=false}={}){
+  if(!state.token||navigator.onLine===false)return memberCatalog;
+  if(memberCatalogPromise)return memberCatalogPromise;
+  if(memberCatalogFetched&&!force)return memberCatalog;
+  memberCatalogPromise=(async()=>{
+    const response=await Api.request("getMemberCatalog",{token:state.token});
+    if(!response?.ok||response.catalogVersion!==1||!Array.isArray(response.members)||
+       response.count!==response.members.length)throw new Error(response?.error||"Members directory is incomplete.");
+    // Never replace a good cached directory with an empty response unexpectedly.
+    if(response.members.length===0&&memberCatalog.length>0)
+      throw new Error("Members directory returned no records; keeping previous names.");
+    memberCatalog=response.members.filter(m=>m&&typeof m.id==="string"&&typeof m.name==="string");
+    memberCatalogFetched=true;saveMemberCatalog();
+    if($("#registrationDialog")?.open)renderRegistrationSuggestions();
+    return memberCatalog;
+  })().finally(()=>{memberCatalogPromise=null});
+  return memberCatalogPromise;
+}
+function hideRegistrationSuggestions(){
+  const menu=$("#registrationNameSuggestions"),field=$("#registrationName");
+  if(menu){menu.hidden=true;menu.innerHTML="";}
+  if(field)field.setAttribute("aria-expanded","false");
+  registrationSuggestionIndex=-1;
+}
+function renderRegistrationSuggestions(){
+  const menu=$("#registrationNameSuggestions"),field=$("#registrationName");
+  if(!menu||!field||$("#registrationType").value==="Family")return hideRegistrationSuggestions();
+  const results=window.MemberAutocomplete?.search(memberCatalog,field.value,6)||[];
+  menu.innerHTML="";
+  if(!results.length||document.activeElement!==field)return hideRegistrationSuggestions();
+  results.forEach((person,i)=>{
+    const button=document.createElement("button");
+    button.type="button";button.className="registration-name-option";
+    button.setAttribute("role","option");button.id="registration-name-option-"+i;
+    button.textContent=person.name; // Names only: no IDs, DOBs, hints or descriptions.
+    button.addEventListener("pointerdown",event=>event.preventDefault());
+    button.addEventListener("click",()=>chooseRegistrationMember(person));
+    menu.appendChild(button);
+  });
+  menu.hidden=false;field.setAttribute("aria-expanded","true");
+}
+function chooseRegistrationMember(person){
+  selectedRegistrationMember=person;
+  $("#registrationName").value=person.name;
+  hideRegistrationSuggestions();
+  const type=$("#registrationType"),hint=$("#registrationAgeHint");
+  if(person.ageGroup==="Kids"||person.ageGroup==="Youth"){
+    type.value=person.ageGroup;
+    hint.textContent="Suggested from birthday (age on December 13, 2026). You can change it.";
+  }else if(person.ageGroup==="Adult"){
+    type.value=""; // DOB cannot establish employment status.
+    hint.textContent="Adult — choose Working Adult or Non-Working Adult.";
+  }else{
+    type.value="";
+    hint.textContent="Birthday unavailable — choose the registration type.";
+  }
+  type.dispatchEvent(new Event("change"));
+}
+function resetRegistrationMatch(){
+  selectedRegistrationMember=null;
+  const hint=$("#registrationAgeHint");if(hint)hint.textContent="";
+  hideRegistrationSuggestions();
+}
+
 const DIRECTORY_KEY="pna_verified_directory_v294";
 const LEGACY_SNAPSHOT_KEY="pna_confirmed_snapshot_v24";
 const TAB_KEY="pna_active_tab_v24";
-const SNAPSHOT_MAX_AGE_MS=7*24*3600*1000;
+const SNAPSHOT_MAX_AGE_MS=90*24*3600*1000; // 90-day last-confirmed offline fallback; sign out clears it.
 let lastConfirmedAt=0,fullSnapshotLoaded=false,directoryLoading=true,directoryError="",directoryFetchPromise=null;
 // People & Roles is a separate, lightweight verified data set. A stalled
 // getData() (which reads every sheet) must never prevent showing this directory.
@@ -106,7 +192,7 @@ function saveConfirmedSnapshot(){
   lastConfirmedAt=Date.now();
   const snapshot={
     userId:state.user.id,savedAt:lastConfirmedAt,
-    bootstrap:{ok:true,apiVersion:29,event:state.bootstrap.event,users:state.bootstrap.users,committees:state.committees,members:state.members},
+    bootstrap:{ok:true,apiVersion:29,event:state.bootstrap.event,capabilities:state.bootstrap.capabilities||{registrationBatch:true},users:state.bootstrap.users,committees:state.committees,members:state.members},
     committees:state.committees,members:state.members,tasks:state.tasks,updates:state.updates,
     finance:state.finance,financeCollections:state.financeCollections,financePayouts:state.financePayouts,registrationPayments:state.registrationPayments,foodItems:state.foodItems,registrations:state.registrations,activity:state.activity,
     archivedCommittees:state.archivedCommittees
@@ -243,6 +329,8 @@ function assertApiV29(response){
     throw new Error("Backend version mismatch: upload the v2.9 Code.gs, run setupDatabase(), and deploy a NEW Apps Script version. Update the /exec URL if it changed.");
 }
 function clearSession(){
+  try{localStorage.removeItem(MEMBER_CATALOG_KEY)}catch{}
+  memberCatalog=[];memberCatalogFetched=false;selectedRegistrationMember=null;
   state.user=null;state.token=null;sessionClear();clearSnapshot();
   state.bootstrap=null;state.committees=[];state.members=[];state.tasks=[];state.updates=[];
   state.finance=[];state.financeCollections=[];state.financePayouts=[];state.registrationPayments=[];financeLedgerVerified=false;state.foodItems=[];state.registrations=[];state.activity=[];state.archivedCommittees=[];
@@ -298,7 +386,7 @@ function scheduleRegistrationFlush(delay=REG_BATCH_DEBOUNCE_MS){
 }
 function queueRegistrationWrite(record){
   if(!state.token||!state.user){toast("Sign in to register participants.");return false;}
-  if(state.bootstrap?.capabilities?.registrationBatch!==true){
+  if(state.bootstrap?.capabilities?.registrationBatch!==true&&!fullSnapshotLoaded){
     toast("Batch registration needs the updated v2.9.2 Apps Script deployment.");
     return false;
   }
@@ -383,7 +471,10 @@ function retryFailedRegistrationWrites(options={}){
 }
 function persistOutbox(){
   try{
-    const all=[...failedJobs,...(inflightJob?[inflightJob]:[]),...writes,...registrationBuffer]
+    // Keep other users' unfinished jobs if the same browser is shared.
+    const existing=JSON.parse(localStorage.getItem(OUTBOX_KEY)||"[]");
+    const foreign=Array.isArray(existing)?existing.filter(j=>j?.userId&&j.userId!==state.user?.id):[];
+    const all=[...foreign,...failedJobs,...(inflightJob?[inflightJob]:[]),...writes,...registrationBuffer]
       .map(job=>({action:job.action,payload:job.payload,requestId:job.requestId,
         userId:job.userId||state.user?.id,count:job.count||1,
         permanentError:!!job.permanentError}));
@@ -409,6 +500,42 @@ function restoreOutbox(){
       updateSaveState();
     }
   }catch{}
+}
+
+// Reapply durable, unconfirmed edits over the last *confirmed* local snapshot.
+// The server remains authoritative after reconnect. Financial receipt/release
+// actions are deliberately NOT counted as paid until Sheets confirms them.
+function overlayPendingWrites(){
+  if(!state.user)return;
+  const jobs=[...failedJobs,...(inflightJob?[inflightJob]:[]),...writes,...registrationBuffer]
+    .filter(job=>job.userId===state.user.id);
+  const upsert=(collection,item)=>{
+    if(!item?.id)return;
+    const old=collection.find(row=>row.id===item.id);
+    if(old)Object.assign(old,item);else collection.push({...item});
+  };
+  const remove=(collection,id)=>{const i=collection.findIndex(row=>row.id===id);if(i>=0)collection.splice(i,1);};
+  for(const job of jobs){
+    const p=job.payload||{};
+    switch(job.action){
+      case "saveCommittee": if(p.committee){upsert(state.committees,{...p.committee,active:true,_localPending:true});} break;
+      case "deleteCommittee": {const c=state.committees.find(x=>x.id===p.id);if(c){upsert(state.archivedCommittees,{...c,active:false,_localPending:true});remove(state.committees,p.id);}break;}
+      case "restoreCommittee": {const c=state.archivedCommittees.find(x=>x.id===p.id);if(c){upsert(state.committees,{...c,active:true,_localPending:true});remove(state.archivedCommittees,p.id);}break;}
+      case "saveMember": if(p.member){const user=state.bootstrap?.users?.find(x=>x.id===p.member.userId);upsert(state.members,{...p.member,name:user?.name||p.member.name||"",active:true,_localPending:true});}break;
+      case "removeMember": remove(state.members,p.memberId);break;
+      case "saveTask": if(p.task)upsert(state.tasks,{...p.task,_localPending:true});break;
+      case "updateTask": {const t=state.tasks.find(x=>x.id===p.taskId);if(t&&p.update){Object.assign(t,{status:p.update.status,progress:p.update.status==="Completed"?100:Number(p.update.progress)||0,latestUpdate:p.update.note||t.latestUpdate,_localPending:true});}break;}
+      case "saveFinance": if(p.entry)upsert(state.finance,{...p.entry,amount:Number(p.entry.amount)||0,_localPending:true});break;
+      case "deleteFinance":remove(state.finance,p.id);break;
+      case "saveFoodItem":if(p.item){const user=state.bootstrap?.users?.find(x=>x.id===p.item.assignedTo);upsert(state.foodItems,{...p.item,assignedToName:user?.name||"",_localPending:true});}break;
+      case "deleteFoodItem":remove(state.foodItems,p.id);break;
+      case "saveRegistration":case "saveRegistrationsBatch":for(const r of registrationRecords(job))upsert(state.registrations,{...r,active:true,registeredBy:state.user.id,registeredByName:state.user.name,_syncState:job===inflightJob?"saving":failedJobs.includes(job)?"failed":"queued"});break;
+      case "deleteRegistration":{const r=state.registrations.find(x=>x.id===p.id);if(r)r.active=false;break;}
+      // Receipt, payout, and registration payment actions are pending but not
+      // displayed as confirmed money until the corresponding ledger read.
+    }
+  }
+  if(state.bootstrap){state.bootstrap.committees=state.committees;state.bootstrap.members=state.members;}
 }
 
 // v2.3: optimistic UI, serialized background writes, a visible unsynced badge.
@@ -466,15 +593,35 @@ async function periodicSync(){
   }
 }
 function unsyncedCount(){return pendingWrites+failedJobs.reduce((n,j)=>n+jobWeight(j),0);}
+function updateOfflineBanner(){
+  const banner=$("#offlineBanner"),info=$("#offlineQueueCount");
+  if(!banner)return;
+  const offline=navigator.onLine===false;
+  banner.classList.toggle("hidden",!offline);
+  if(info)info.textContent=unsyncedCount()?`${unsyncedCount()} change(s) saved on this device · waiting to sync`:
+    !state.user?"Connect online once to sign in and download event records":
+    !(fullSnapshotLoaded||verifiedDirectory)?"No saved event records yet · reconnect to load them":
+    "Last confirmed records shown · edits will be queued on this device";
+}
+function registerOfflineApp(){
+  if(!('serviceWorker' in navigator)||!window.isSecureContext)return;
+  navigator.serviceWorker.register('./sw.js',{scope:'./',updateViaCache:'none'})
+    .catch(err=>console.warn('Offline app shell could not be cached:',err));
+}
 function updateSaveState(){
   const el=$("#saveState"),btn=$("#syncRefreshBtn"),badge=$("#syncCount");
   if(!el||!btn||!badge)return;
   const total=unsyncedCount();
   const failedCount=failedJobs.reduce((n,j)=>n+jobWeight(j),0);
-  const label=failedCount?`${failedCount} need sync`:(pendingWrites?`${pendingWrites} queued / syncing…`:refreshing?"Refreshing…":"All changes saved");
+  const offline=navigator.onLine===false;
+  const label=offline?(total?`Offline · ${total} pending`:
+    (fullSnapshotLoaded||verifiedDirectory)?"Offline · saved view":"Offline · connect first"):
+    failedCount?`${failedCount} need sync`:(pendingWrites?`${pendingWrites} queued / syncing…`:refreshing?"Refreshing…":"All changes saved");
   el.textContent=label;
   el.classList.toggle("saving",(pendingWrites>0||refreshing)&&!failedJobs.length);
   el.classList.toggle("save-error",failedJobs.length>0);
+  el.classList.toggle("offline",offline);
+  updateOfflineBanner();
   el.title=failedJobs.length?"Some edits are not confirmed by Sheets. Press Sync & Refresh to retry safely.":pendingWrites?"Saving changes to Google Sheets in the background.":refreshing?"Latest data is loading; the existing view stays visible.":"Latest write confirmations received";
   badge.textContent=total>99?"99+":String(total);
   badge.classList.toggle("hidden",!total);
@@ -509,6 +656,9 @@ function queueWrite(action,payload,optimistic,{awaitConfirmation=false}={}){
 }
 async function drainWrites(){
   if(writing||!writes.length)return;
+  // Explicitly keep the queue on disk while offline; no doomed requests or
+  // misleading failed confirmations. Connectivity resumes in `online` handler.
+  if(navigator.onLine===false){updateSaveState();return;}
   writing=true;
   let storageBlocked=false;
   try{
@@ -591,12 +741,14 @@ async function drainWrites(){
 }
 function allowNavigation(){if(unsyncedCount()){toast("Unsynced changes remain. Sync & Refresh before leaving.");return false}return true;}
 async function refreshLatest({includeBootstrap=false,silent=false}={}){
+  if(navigator.onLine===false){setConnection("Offline · showing last confirmed records");updateSaveState();return false;}
   if(refreshing)return false;
   if(unsyncedCount())return false;
   refreshing=true;updateSaveState();
   try{
     if(includeBootstrap)await loadBootstrap({preserveView:true});
     const updated=await verifiedRefreshWithRetry();
+    if(memberCatalogFetched)loadMemberCatalog({force:true}).catch(()=>{});
     if(updated&&!silent)toast("Latest Google Sheets updates loaded");
     return updated;
   }catch(err){
@@ -606,6 +758,7 @@ async function refreshLatest({includeBootstrap=false,silent=false}={}){
   }finally{refreshing=false;updateSaveState()}
 }
 async function manualSyncRefresh(){
+  if(navigator.onLine===false){updateSaveState();toast("Offline: changes remain on this device and will sync when connected.");return;}
   if(refreshing){toast("Already refreshing; your current view is staying open.");return;}
   if(registrationBuffer.length)flushRegistrationBuffer();
   if(pendingWrites||writing){
@@ -631,6 +784,7 @@ async function init(){
   bindEvents();
   preventAccidentalZoom();
   updateSaveState();
+  registerOfflineApp();
   // No frequent background polling: one refresh per 30 minutes after the
   // last successful sync, plus edits, manual Sync and page reload.
   schedulePeriodicSync();
@@ -639,10 +793,19 @@ async function init(){
       periodicSync();
   });
   window.addEventListener("online",()=>{
+    updateSaveState();
+    setConnection("Connection restored · syncing saved changes…");
     if(registrationBuffer.length)flushRegistrationBuffer();
-    retryFailedWrites({showToast:true});
-    if(document.visibilityState==="visible"&&Date.now()>=periodicSyncDueAt)
-      periodicSync();
+    // Retried jobs keep the original request IDs. Enqueue before starting
+    // new writes so that older edits are applied in the correct order.
+    if(failedJobs.length)retryFailedWrites({showToast:true});
+    if(writes.length&&!writing)drainWrites();
+    if(!unsyncedCount())refreshLatest({includeBootstrap:true,silent:true})
+      .catch(err=>setConnection("Back online · refresh needs attention: "+err.message));
+    else refreshAfterWritesRequested=true;
+  });
+  window.addEventListener("offline",()=>{
+    updateSaveState();setConnection("Offline · showing last confirmed records · edits queued on this device");
   });
   window.addEventListener("beforeunload",event=>{if(unsyncedCount()){event.preventDefault();event.returnValue=""}});
   let showedCache=false;
@@ -652,15 +815,28 @@ async function init(){
       const sess=JSON.parse(stored);
       if(sess.user&&sess.token){
         state.user=sess.user;state.token=sess.token;
+        restoreMemberCatalog();
         showedCache=restoreSnapshot(state.user.id);
         const hasPeople=restoreDirectory(state.user.id);
         restoreOutbox();
+        if(showedCache)overlayPendingWrites();
         if(showedCache||hasPeople){
           renderAll();
           setConnection(showedCache?"Showing last confirmed view · checking Google Sheets…":"People directory restored · loading other records…");
         }
       }
-    }catch{clearSession()}
+    }catch(err){console.error("Saved-view restore failed; local data and sign-in retained",err);}
+  }
+  if(navigator.onLine===false){
+    if(state.token&&(showedCache||verifiedDirectory)){
+      directoryLoading=false;setConnection("Offline · showing saved records · local changes are queued");renderAll();
+    }else{
+      directoryLoading=false;
+      setConnection("Offline · connect once to sign in and load event records");
+      if(!state.token)renderConnectionError("Connect to the internet once to sign in and download event records for offline use.");
+      else renderConnectionError("No confirmed offline records on this device. Reconnect to load the directory.");
+    }
+    updateSaveState();return;
   }
   try{
     // Every page load requests fresh committee records from Apps Script, even
@@ -781,8 +957,9 @@ async function refreshData({allowPending=false}={}){
   schedulePeriodicSync();
   fullSnapshotLoaded=true;directoryLoading=false;directoryError="";
   // Never cache unconfirmed optimistic records as confirmed sheet data.
-  if(allowPending&&unsyncedCount())markPendingRegistrations();
-  else saveConfirmedSnapshot();
+  // Persist only the last server-confirmed snapshot, never local optimistic edits.
+  saveConfirmedSnapshot();
+  if(allowPending&&unsyncedCount())overlayPendingWrites();
   setConnection(unsyncedCount()?`Live records loaded · ${unsyncedCount()} queued / unsynced`:`Synced · ${state.user.name}`,!unsyncedCount());
   renderAll();return true;
 }
@@ -872,10 +1049,32 @@ function bindEvents(){
   $("#registrationTypeFilter").onchange=renderRegistration;
   $("#registrationForm").onsubmit=saveRegistrationForm;
   $("#registrationAttendees").addEventListener("input",()=>{});
+  $("#registrationName").addEventListener("input",()=>{
+    if(selectedRegistrationMember&&$("#registrationName").value!==selectedRegistrationMember.name){
+      resetRegistrationMatch();
+      $("#registrationType").value=""; // a different name must not inherit the last person's age category
+    }
+    renderRegistrationSuggestions();
+  });
+  $("#registrationName").addEventListener("focus",renderRegistrationSuggestions);
+  $("#registrationName").addEventListener("blur",()=>setTimeout(hideRegistrationSuggestions,120));
+  $("#registrationName").addEventListener("keydown",event=>{
+    const items=[...$("#registrationNameSuggestions").querySelectorAll("button")];
+    if(!items.length)return;
+    if(event.key==="Escape"){hideRegistrationSuggestions();return;}
+    if(event.key==="ArrowDown"||event.key==="ArrowUp"){
+      event.preventDefault();registrationSuggestionIndex=(registrationSuggestionIndex+(event.key==="ArrowDown"?1:-1)+items.length)%items.length;
+      items.forEach((b,i)=>b.classList.toggle("is-highlighted",i===registrationSuggestionIndex));
+    }else if(event.key==="Enter"&&!$("#registrationNameSuggestions").hidden){
+      event.preventDefault();items[Math.max(0,registrationSuggestionIndex)].click();
+    }
+  });
   $("#registrationType").onchange=()=>{
     const isFamily=$("#registrationType").value==="Family";
     $("#registrationAttendees").disabled=!isFamily;
     if(!isFamily)$("#registrationAttendees").value="1";
+    if(isFamily){resetRegistrationMatch();}
+    else hideRegistrationSuggestions();
   };
   $("#addMemberBtn").onclick=()=>{const committee=state.committees.find(c=>c.id===state.managingCommitteeId);if(committee)memberEditor(committee)};
   $("#taskCommitteeFilter").onchange=renderTasks;
@@ -1366,7 +1565,7 @@ function financeRecords(calc){
       item,busy,released,received,kind:"finance"});
   }
   for(const item of state.registrations){
-    if(!active(item.active)||item._syncState)return; // never show unsynced registration as a confirmed ledger row
+    if(!active(item.active)||item._syncState)continue; // exclude unconfirmed registration from ledger, not the entire records list
     const amount=FinanceModel.registrationRate(item.registrationType);if(amount<=0)continue;
     const received=calc.registrationPayments.get(String(item.id)),busy=registrationPaymentPending(item.id);
     records.push({key:"reg:"+item.id,category:received?"received":"receivables",
@@ -1552,6 +1751,12 @@ function openRegistrationEditor(item=null){
   $("#registrationAttendees").disabled=$("#registrationType").value!=="Family";
   $("#registrationNotes").value=item?.notes||"";
   $("#registrationError").textContent="";
+  resetRegistrationMatch();
+  if(!memberCatalogFetched)restoreMemberCatalog();
+  // The form is usable immediately: this read never blocks registration.
+  if(navigator.onLine!==false)loadMemberCatalog({force:true}).catch(err=>{
+    if(!memberCatalogFetched)console.warn("Optional Members search unavailable:",err.message);
+  });
   setFormBusy(form,false);
   if(!$("#registrationDialog").open)$("#registrationDialog").showModal();
 }
@@ -1579,6 +1784,7 @@ function saveRegistrationForm(event){
     // Keep the form open and ready for the next person without waiting for Sheets.
     // Retain the selected category to reduce repetitive data entry.
     $("#registrationName").value="";
+    resetRegistrationMatch();
     $("#registrationNotes").value="";
     $("#registrationAttendees").value="1";
     $("#registrationName").focus();

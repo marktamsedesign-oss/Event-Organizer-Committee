@@ -23,7 +23,7 @@ const Api = (() => {
     });
   }
   async function request(action, data={}, reuseRequestId=null) {
-    if (["bootstrap","getData","getTaskUpdates"].includes(action)) return jsonp({action,...data});
+    if (["bootstrap","getData","getTaskUpdates","getMemberCatalog"].includes(action)) return jsonp({action,...data});
     const requestId = reuseRequestId || "req_" + Date.now() + "_" + Math.random().toString(36).slice(2,9);
     const body = new URLSearchParams({action,requestId,payload:JSON.stringify(data)});
     // no-cors POST is intentionally opaque; the operation receipt is retrieved via JSONP.
